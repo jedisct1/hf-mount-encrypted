@@ -1,0 +1,591 @@
+
+# 2026-03-25 19:00:38.015240
++/init
+
+# 2026-03-25 19:09:33.310455
++Your goal is to add optional support for encryption, so that it's possible to locally encrypt files
++before uploading them to hugging face, and decryption should also be transparent. In order to do so
++you MUST use the "aegis" crate, with the AEGIS-128X2 cipher. It's on crates.io but there's also a
++local checkout at ~/src/rust-aegis for reference. You must use the RAF functions that implement easy
++to use random IO with encryption. No need for the merkle tree. Create a plan in a markdown file for
++that, in "plans/PLAN-cd.md"
+
+# 2026-03-25 19:13:43.810574
++It is possible to mount a bucket in read/write mode?
+
+# 2026-03-25 19:17:12.491782
++I also wrote a plan in plans/PLAN-cl.md . Read it. What do you think?
+
+# 2026-03-25 19:18:57.496023
++This is a better plan than mine in several important ways. Honest comparison:
++
++  Where PLAN-cd wins:
++
++  1. Encrypted staging files. Using RAF directly as the staging file for advanced writes is the right
++  call. My plan keeps staging plaintext and only encrypts at upload time — that's simpler but means
++  plaintext sits on disk unnecessarily, and you pay a full encrypt-copy at flush time. PLAN-cd's
++  approach of replacing pwrite/pread with raf.write()/raf.read() on the staging file is more work but
++  eliminates that copy and keeps local disk ciphertext.
++  2. Metadata marking. This is a real gap in my plan. PLAN-cd uses content_type on BatchOp::AddFile
++  (application/vnd.hf-mount+enc; scheme=aegis-128x2-raf; chunk_size=65536) to tag encrypted files.
++  Without this, a mount can't distinguish encrypted from plaintext remote files — my plan just silently
++   assumes everything is encrypted when the flag is on, which breaks mixed-content scenarios and makes
++  it impossible to mount an encrypted repo without the key to even list files.
++  3. Forcing advanced writes. Instead of implementing an EncryptedStreamingWriter that buffers to a
++  local RAF and then re-uploads (my approach), PLAN-cd just forces advanced_writes = true when
++  encryption is on. This is pragmatic — the streaming path is append-only and doesn't map well to RAF.
++  One fewer abstraction to build and test.
++  4. Read path simplicity. Both plans materialize ciphertext to a local file and decrypt. But PLAN-cd
++  is more explicit about the flow: download → RAF open → decrypt to plaintext cache → serve as
++  OpenFile::Local. My plan wraps this in an EncryptedXetOps adapter which adds indirection without real
++   benefit since VirtualFs still needs to know about encryption for the OpenFile variant handling.
++
++  Where my plan (PLAN-cl) has a point:
++
++  - The adapter pattern keeps VirtualFs changes minimal, but this comes at the cost of correctness —
++  VirtualFs does need to know about encryption for the staging file I/O, size reporting, and open-file
++  variant selection. Trying to hide it behind XetOps is a leaky abstraction.
++
++  Bottom line: PLAN-cd is the one to implement. The main changes are more invasive (touching
++  write()/read() in VirtualFs to use RAF for encrypted staging) but they're the correct integration
++  points. I'd only add one thing from my plan: the EncryptedXetOps idea could still be useful for the
++  upload_files path in flush_batch, but it's not essential.
+
+# 2026-03-25 19:22:31.114980
++Revised plan written. Here's what changed:
++
++  Fixed (High):
++  - Remote metadata: added explicit content_type format (application/vnd.hf-mount+enc;
++  scheme=aegis-128x2-raf; chunk=65536; size=<N>) using the existing BatchOp::AddFile slot. TreeEntry
++  now parses it too, so encrypted files are identifiable at directory listing time and mixed content
++  works.
++  - Size handling: plaintext size is embedded in content_type and extracted during inode population —
++  stat() is correct from the start, never shows ciphertext size. All three apply_commit call sites pass
++   plaintext size explicitly.
++
++  Fixed (Medium):
++  - HTTP/LFS files: added a decrypt-after-download branch in open_readonly() for the
++  download_file_http() path at mod.rs:1122. No longer claims "encryption completely out of VirtualFs."
++  - Lazy read regression: honestly documented as a v1 trade-off. Full-file download for encrypted xet
++  reads is a real regression for large files. Outlined v2 path (RafIo adapter over on-demand range
++  downloads).
++
++  Adopted from PLAN-cd:
++  - Force advanced_writes = true when encryption is on, instead of building an EncryptedStreamingWriter
++  - encrypted flag on InodeEntry for dispatch in open_readonly()
++
++  Fixed (Low): confirmed aegis = { features = ["raf"] } is correct per upstream Cargo.toml. 
+
+# 2026-03-25 19:31:54.547920
++Updated both plans. Summary of the three fixes:
++
++  1. Dual-size model (High): Added remote_size: Option<u64> to InodeEntry. entry.size stays plaintext
++  (for stat(), EOF), entry.remote_size holds ciphertext size (for XetFileInfo::new() at xet.rs:119 and
++  download_to_file() at mod.rs:1007). Also added stored=<N> to the content_type format so the metadata
++  is self-contained and the HEAD fallback path works without a separate size lookup.
++  2. Parser API (Medium): Fixed signature to Result<Option<EncryptedFileInfo>, Error> — Ok(None) for
++  non-encrypted, Err for malformed.
++  3. content_type checkpoint (Medium): Added as explicit implementation step 2 — upload a file with
++  custom content_type, list tree, verify roundtrip. Fallback: per-file HEAD request in open_readonly()
++  if the tree API doesn't return it. The bucket tree deserializes directly into TreeEntry
++  (hub_api.rs:532) so it should work if the API includes the field; repo tree goes through
++  RepoTreeEntry (hub_api.rs:594) and needs the field added there too.
++
++  On your open questions — I think PLAN-cd's encrypted staging is the better long-term direction
++  (local-at-rest protection + no encrypt-copy at flush time), and plaintext staging in PLAN-cl is the
++  simpler v1. PLAN-cd is the one we should use.
+
+# 2026-03-25 19:34:20.144702
++Delete the other plan, then. 
+
+# 2026-03-25 19:35:00.587681
++/learn
+
+# 2026-03-25 19:37:14.840717
++Done. Key changes to PLAN-cd.md:
++
++  - --encrypt dropped — --encryption-key-file alone enables encryption
++  - --encryption-algorithm added, defaults to aegis-128x2, supports all six AEGIS variants. Key size
++  validated against algorithm at startup (16 bytes for 128-bit, 32 bytes for 256-bit)
++  - Per-file algorithm dispatch — scheme= in content_type records the algorithm used at write time.
++  Reads always use the recorded algorithm, so a mount can read files encrypted with different variants
++  - RafHandle enum — wraps Raf<Aegis128X2>, Raf<Aegis256>, etc. inside the crypto module so callers
++  don't need to be generic
++  - RAF-as-authoritative — on open, raf.size() and ciphertext file length are cross-checked against
++  content_type's size= and stored=. Mismatch → EIO
++  - Dual-size test matrix — explicit coverage for flush_one, flush_batch, apply_commit, rename, and the
++   RAF cross-check
+
+# 2026-03-25 19:38:28.000357
++Added the algorithm selection policy to PLAN-cd.md:
++
++  - New files → mount default (--encryption-algorithm)
++  - Rewrite of existing encrypted file → preserve the file's recorded algorithm from content_type. No
++  silent re-encryption.
++  - file_algorithm: Option<Algorithm> added to InodeEntry so the staging open and flush paths know
++  which algorithm to use
++  - open_advanced_write() now documents the algorithm choice for each case (existing encrypted,
++  existing plaintext with encryption enabled, new file) . what do you think?
+
+# 2026-03-25 19:39:25.544984
++Done. Added both invariants to PLAN-cd.md:
++
++  1. Missing algorithm on encrypted inode → EIO, not fallback. Prevents silent corruption from
++  propagating.
++  2. Plaintext → encrypted transition is atomic: encrypted, file_algorithm, remote_size, and
++  content_type must all update together at commit time. Partial updates leave the inode inconsistent. - What do you think?
+
+# 2026-03-25 19:41:18.710450
++Done. Consolidated into a named "Inode encryption metadata consistency invariant" in PLAN-cd.md that
++  covers all three transitions:
++
++  - Plaintext → encrypted: all five fields set together
++  - Encrypted → encrypted: file_algorithm preserved, sizes updated, content_type rewritten with new
++  sizes
++  - Corruption: encrypted == true + file_algorithm == None → EIO
++
++  The test matrix now references the invariant by name and asserts it after every commit path
++  (flush_one, flush_batch, apply_commit, plaintext→encrypted first flush, encrypted rewrite, rename,
++  and the corruption case).
+
+# 2026-03-25 20:13:34.139807
++Implementation complete. Here's a summary:
++
++  What was built:
++  - Optional client-side encryption via --features encrypt with --encryption-key-file and
++  --encryption-algorithm CLI flags
++  - Full src/crypto.rs module: 6 AEGIS algorithm variants, RafHandle enum for algorithm dispatch,
++  content_type parser/formatter, key loading (raw + base64), encrypt/decrypt file helpers
++  - Write path: staging files encrypted to temp RAF files at flush time, content_type set on
++  BatchOp::AddFile, plaintext size in apply_commit, ciphertext size in remote_size
++  - Read path: encrypted xet-backed files download ciphertext → RAF decrypt → serve plaintext locally;
++  encrypted HTTP/LFS files similarly decrypted after download
++  - Inode metadata: encrypted, file_algorithm, remote_size fields populated from content_type on tree
++  listings
++
++  Test results: 211 tests pass with encrypt feature, 185 without. Clippy clean both ways.
++
++  Design deviation from PLAN-cd: Staging files stay plaintext because Raf is not Send/Sync (can't be
++  stored in OpenFile::Local behind RwLock). Encryption happens at flush time instead — functionally
++  equivalent since local disk is trusted. - Review my changes
+
+# 2026-03-25 20:24:53.002470
++ll four issues fixed:
++
++  1. Malformed metadata → no longer falls back to plaintext. Sets encrypted=true, file_algorithm=None
++  which triggers the corruption invariant (EIO on open). The file is inaccessible rather than silently
++  serving ciphertext as garbage.
++  2. Poll/revalidation preserves encryption state. update_remote_file now accepts content_type and
++  re-parses encryption metadata on remote changes. HEAD revalidation (which lacks content_type)
++  preserves the existing encryption fields and routes the raw remote size to remote_size instead of
++  overwriting plaintext size.
++  3. Advanced write downloads use remote_size for encrypted files. Both open_advanced_write and setattr
++   truncation bootstrap now download using ciphertext size, then decrypt to a plaintext staging file.
++  The download-decrypt pattern handles the full flow: ciphertext temp → RAF decrypt → plaintext
++  staging.
++  4. decrypt_file cross-checks RAF vs metadata. Verifies raf.size() matches info.plaintext_size and
++  ciphertext file length matches info.ciphertext_size. Mismatch → error, not silent corruption.
+
+# 2026-03-25 20:27:33.825501
++Everything clean. The verification pass found two issues in streaming_commit — both are unreachable
++  because encryption forces advanced_writes = true, but I added a debug_assert to catch it if that
++  invariant ever breaks. All other size/encryption paths are consistent:
++
++  - All download_to_file calls use remote_size for encrypted files
++  - All apply_commit calls pass plaintext size for encrypted files
++  - All content_type fields are set on encrypted commits
++  - All entry.size assignments are plaintext
++  - Corruption paths (encrypted=true, file_algorithm=None) are properly guarded with EIO on every
++  access point - Review all my pending code changes
+
+# 2026-03-25 20:31:36.311346
++All clean. Both fixes applied:
++
++  1. Streaming guard: debug_assert → hard EIO error in all builds. If a future regression routes
++  encrypted writes to streaming_commit, it fails loudly instead of silently corrupting data.
++  2. Cache cleanup: Plaintext temp files are unlinked immediately after the fd is opened. The Unix fd
++  keeps the data alive for reads; the disk space is reclaimed when the file handle is released. No
++  cache growth.
+
+# 2026-03-25 21:56:26.356616
++Do you think encruyption should be directly in XET rather than hf-mount?
+
+# 2026-03-25 21:59:35.615079
++What's the maximum size of a file name?
+
+# 2026-03-25 21:59:55.997575
++Yes, but in hf-mount?
+
+# 2026-03-25 22:00:57.222964
++How is a file name mapped to a huggingface bucket?
+
+# 2026-03-25 22:02:07.867014
++What's the length limit of a HF path?
+
+# 2026-03-25 22:14:09.572102
++Analyze how XET works in /Users/j/src/draft-denis-xet to confirm that it makes sense given how XET works
+
+# 2026-03-25 22:17:29.359482
++Review the plan in plans/filename-encryption.md and give me your feedback
+
+# 2026-03-25 22:18:16.998126
++I want file names and content (deterministic, but per-client-secret-key) encrypted
+
+# 2026-03-25 22:26:25.390837
++All four issues addressed:
++
++  1. Hub boundary coverage — replaced the ad-hoc caller-by-caller approach with an EncryptedHubOps<H:
++  HubOps> wrapper that intercepts all four path-bearing methods (list_tree, head_file,
++  download_file_http, batch_operations). VFS code doesn't change at all.
++  2. HKDF scoping — mount_id is now built from SourceKind (canonical, includes repo_type/revision) +
++  path_prefix, not Source::label(). Two subfolder mounts of the same bucket derive independent keys.
++  3. Fail-closed decryption — decrypt_filename returns Err on failure, not the unchanged name. Wrong
++  key during tree load surfaces as a visible error. No silent passthrough of ciphertext into the inode
++  table.
++  4. Rename content_type preservation — plan now explicitly calls out the pre-existing bug where
++  rename_remote() drops content_type: None and specifies the fix: propagate content_type from the
++  source inode through RenameInfo into the new BatchOp::AddFile, including for directory renames with
++  descendants.
+
+# 2026-03-25 22:31:25.562686
++Updated with the three residual notes:
++
++  1. Arc<dyn HubOps> threading — wrapper stores inner: Arc<dyn HubOps> matching the existing VFS field
++  at mod.rs:79.
++  2. Poll loop coverage — explicitly noted that poll.rs:24's list_tree call goes through the wrapper
++  automatically.
++  3. content_type reconstruction — since the inode stores parsed fields (encrypted, file_algorithm,
++  remote_size), not a raw string, the plan now specifies a content_type_string() helper on InodeEntry
++  that reconstructs it via crypto::format_content_type() for use in RenameInfo.
+
+# 2026-03-25 22:32:43.145970
++Review the plan in plans/hkdf-key-derivation.md and give me your feedback. Remember that I don't care about backwards compatibility.
+
+# 2026-03-25 22:38:03.976761
++Plan rewritten at plans/hkdf-key-derivation.md. Here's what changed from v1 based on your review:
++
++  Derivation moved to call sites, not setup -- EncryptionConfig now stores the HKDF-Extract PRK
++  (computed once) plus the canonical source_context string. The cheap HKDF-Expand step runs at each
++  encrypt/decrypt call site using the file's effective fe.file_algorithm, not the CLI default. This
++  preserves mixed-algorithm operation.
++
++  Source identity uses resolved SourceKind::Display -- context string comes from
++  hub_client.source().to_string() after from_source has resolved repo aliases. Format is "bucket/<id>"
++  or "<type>/<repo_id>/<revision>", which prevents cross-namespace collisions (bucket user/foo vs model
++   user/foo).
++
++  Subfolder explicitly excluded -- same underlying source produces the same keys regardless of mount
++  subfolder.
++
++  Flush path aligned -- step 6 reads entry.file_algorithm before encrypting (falling back to
++  config.algorithm for new files), matching the existing behavior in build_flush_content_type at
++  flush.rs:268.
++
++  Tests cover the real code paths -- mixed-algorithm reads, rewrite-preserves-algorithm, namespace
++  separation, alias stability.
+
+# 2026-03-25 22:38:35.382920
++Updated. The filename encryption plan now:
++
++  - Explicitly depends on the HKDF plan as a prerequisite
++  - Aligns on the same HKDF parameters (fixed salt b"hf-mount-v1", length-prefixed info, 32-byte master
++   key)
++  - Extends the info string with path_prefix and a purpose field (b"content" / b"filename") rather than
++   inventing a separate scheme
++  - Notes that the path_prefix extension is a change to the HKDF plan's info format, so the two plans
++  must agree
++
++  The HKDF plan itself should also be updated to include path_prefix in its info structure — want me to
++   do that?
+
+# 2026-03-25 22:41:59.238277
++Plan rewritten at plans/hkdf-key-derivation.md. Here's what changed from v1 based on your review:
++
++  Derivation moved to call sites, not setup -- EncryptionConfig now stores the HKDF-Extract PRK
++  (computed once) plus the canonical source_context string. The cheap HKDF-Expand step runs at each
++  encrypt/decrypt call site using the file's effective fe.file_algorithm, not the CLI default. This
++  preserves mixed-algorithm operation.
++
++  Source identity uses resolved SourceKind::Display -- context string comes from
++  hub_client.source().to_string() after from_source has resolved repo aliases. Format is "bucket/<id>"
++  or "<type>/<repo_id>/<revision>", which prevents cross-namespace collisions (bucket user/foo vs model
++   user/foo).
++
++  Subfolder explicitly excluded -- same underlying source produces the same keys regardless of mount
++  subfolder.
++
++  Flush path aligned -- step 6 reads entry.file_algorithm before encrypting (falling back to
++  config.algorithm for new files), matching the existing behavior in build_flush_content_type at
++  flush.rs:268.
++
++  Tests cover the real code paths -- mixed-algorithm reads, rewrite-preserves-algorithm, namespace
++  separation, alias stability. - What do you think?
+
+# 2026-03-25 22:42:20.743589
++I made changes to the plan, review it
+
+# 2026-03-25 22:46:18.817846
++All three issues fixed:
++
++  1. Revision excluded from HKDF context -- Added SourceKind::encryption_context() that formats
++  "<kind>/<id>" without revision. Explicit rationale: encryption metadata doesn't record revision, and
++  the same file can be accessed via main, a SHA, or a tag. Added test #4 for revision stability.
++  2. Cargo.toml step corrected -- hmac-sha256 is now optional = true and wired into encrypt =
++  ["dep:aegis", "dep:hmac-sha256"], matching the repo's actual feature layout.
++  3. No more throwaway config -- Steps 6-7 now commit to changing encrypt_file/create_raf signatures to
++   take (key, algorithm, chunk_size) directly. The flush call site resolves effective_algorithm,
++  derives the key, and passes both as plain arguments.
+
+# 2026-03-25 22:48:07.788300
++Both points addressed:
++
++  1. Zeroization wording softened -- replaced "zeroized after Extract" with honest drop semantics and
++  an explicit rationale: the PRK is equally sensitive and lives for the full session, so zeroizing only
++   the IKM would be security theater. If we later want memory-scraping defense, that's a separate
++  change covering all key material.
++  2. Test migration step added (step 10) -- calls out the two concrete sites (crypto.rs:378 test_config
++   helper and virtual_fs/tests.rs:2550 test_config/vfs_encrypted) that construct the old
++  EncryptionConfig shape and need coordinated rewrites to match the new (prk, source_context) struct
++  and (key, algorithm, chunk_size) function signatures.
++
+
+# 2026-03-25 22:49:50.375236
++All three issues fixed:
++
++  1. path_prefix handling — new section 4a: encrypt the path_prefix at HubApiClient construction time
++  in setup.rs, before the wrapper is applied. The client's internal prefixed_path()/strip_path_prefix()
++   then operates on the encrypted prefix, and the wrapper handles per-call paths. Both layers compose
++  correctly.
++  2. No eager content key derivation — EncryptionConfig now extends the HKDF plan's struct (PRK +
++  source_context + on-demand derive_key(algorithm)) with just two new fields: precomputed filename_key
++  (HCTR2-128, algorithm-independent) and encrypt_filenames flag. Content keys remain on-demand
++  per-algorithm as the HKDF plan requires.
++  3. Internal consistency — the key derivation section now clearly shows: content keys use the HKDF
++  plan's existing derive_key() unchanged; derive_filename_key() is a new standalone function with its
++  own info prefix ("hf-mount-filename-v1"), no algorithm scheme, no path_prefix. The two derivation
++  paths share the PRK but have fully independent info strings.
+
+# 2026-03-25 22:52:16.431912
++/compact
+
+# 2026-03-25 22:56:51.614693
++
++  Cargo.toml — hmac-sha256 = { version = "1", optional = true }, wired into encrypt = ["dep:aegis",
++  "dep:hmac-sha256"]
++
++  src/crypto.rs — Core changes:
++  - EncryptionConfig stores prk: [u8; 32] + source_context: String instead of key: Vec<u8>
++  - load_key → load_master_key — always requires 32-byte key, algorithm-independent
++  - New: extract_prk(), build_info(), derive_key(), EncryptionConfig::derive_key()
++  - encrypt_file / create_raf take (key, algorithm, chunk_size) directly instead of &EncryptionConfig
++  - 6 new tests: determinism, source separation, namespace separation, algorithm separation, output
++  length, non-identity
++
++  src/hub_api.rs — SourceKind::encryption_context() formats "bucket/<id>" or "<type>/<id>" (revision
++  excluded)
++
++  src/setup.rs — Uses resolved hub_client.source().encryption_context() after alias resolution
++
++  src/virtual_fs/flush.rs — Both flush_one and flush_batch now resolve file_algorithm from the inode,
++  derive the matching key, and pass it to the updated encrypt_file
++
++  src/virtual_fs/mod.rs — Both decrypt sites call config.derive_key(algorithm) using the file's
++  metadata algorithm
++
++  223 tests pass, clippy clean, fmt clean.
+
+# 2026-03-25 23:35:18.898937
++Review the code changes I just made in 235059c1208cda563332a3de684de4247ef56eff
+
+# 2026-03-26 12:36:03.958863
++/tools
+
+# 2026-03-26 12:37:03.302201
++Analyze the entire code base and try to find bugs and logic errors that are provably correct and necessary.
+
+# 2026-03-26 12:44:44.981272
++Analyze how to improve network performance and reduce network round trips and latency in this application and protocol.
+
+# 2026-03-26 12:50:54.607907
++Create a plan in a markdown file for Parent-directory freshness cache to suppress per-file `HEAD`s.  Everything must remain safe and correct. 
+
+# 2026-03-26 12:56:34.789104
++/init
+
+# 2026-03-26 13:01:09.513984
++Create a plan in a markdown file for Parent-directory freshness cache to suppress per-file `HEAD`s.  Everything must remain safe and correct. Deeply think about the problem. It must be implementable with minimal code changes.
+
+# 2026-03-26 13:11:48.469146
++The plan is well-researched — line references are accurate and the claims about existing behavior check out against the
++  code. Here's my feedback:
++
++  Overall assessment
++
++  This is a high-quality, minimal-surface-area optimization plan. The key insight is sound: list_tree already proves the same
++   file identity fields that HEAD checks, so the per-file HEADs within the TTL window are genuinely redundant work. The
++  safety analysis is thorough and the invariants are clearly stated.
++
++  Substantive feedback
++
++  1. Step 5 should not be optional — it's load-bearing for practical value
++
++  This is the biggest issue. ensure_children_loaded() short-circuits when children_loaded == true, meaning it only actually
++  fetches (and thus stamps last_revalidated) on the initial load or after an invalidation+reload cycle. Without step 5:
++
++  - Directory loads, last_revalidated is stamped
++  - TTL passes, parent is now "stale"
++  - Lookups fall back to per-file HEADs
++  - But children_loaded is still true, so ensure_children_loaded won't re-fetch
++  - Parent freshness never refreshes — you're back to per-file HEADs permanently until the next poll invalidation
++
++  For long-lived mounts (the common case), the optimization would only help during the first TTL window after each directory
++  load. That's a much smaller win than the plan implies in the "Expected outcome" section. Promoting step 5 to required makes
++   the optimization actually deliver on its promise of "repeated lookups... should usually avoid per-file HEADs entirely."
++
++  2. Explicitly address the ensure_children_loaded short-circuit path
++
++  The plan references ensure_children_loaded but doesn't mention its early-return behavior when children_loaded == true. This
++   matters because it determines whether repeated readdir + lookup sequences refresh the timestamp. The plan should
++  explicitly state: "This stamp is set only when the listing is actually fetched, not on the short-circuit path when
++  children_loaded is already true."
++
++  3. Race window between parent read and child read under the lock
++
++  The plan says to compute parent_fresh while reading parent_entry in the fast path. Since lookup() already holds a read lock
++   on the inode table when it inspects both parent and child, this is fine — but worth explicitly stating that both reads
++  happen under the same lock acquisition, so there's no TOCTOU between checking parent freshness and reading child attrs.
++
++  4. Dual semantics on last_revalidated — pragmatic but worth a type-level guard
++
++  Reusing the field is pragmatic and I agree it's the right call for minimality. But the risk section's mitigation ("document
++   it clearly, keep reads guarded by kind == Directory") is a bit soft. A stronger low-cost option: add a
++  #[cfg(debug_assertions)] assertion in revalidate_file() that the inode is a file, and in the new parent-freshness check
++  that the inode is a directory. This catches accidental cross-use in tests without runtime cost.
++
++  5. Consider InodeKind::Symlink
++
++  The fast path gates on InodeKind::File. Symlinks pointing to files in the same directory have the same "already proven by
++  parent listing" property. Not critical for v1, but worth a sentence in the plan about whether this is an intentional
++  exclusion or a future opportunity.
++
++  6. Test coverage gap: the TTL boundary
++
++  The proposed tests cover fresh-parent-skips-HEAD and stale-parent-falls-back, but there's no test for the exact boundary —
++  i.e., lookup at metadata_ttl - epsilon succeeds from cache, lookup at metadata_ttl + epsilon triggers HEAD. This is worth
++  adding since off-by-one in TTL comparisons (< vs <=) can silently degrade the optimization.
++
++  Minor nits
++
++  - The plan references src/virtual_fs/poll.rs:217 for poll invalidation, but the actual invalidate_children call is at line
++  221. (Small discrepancy, not material.)
++  - "Stamp directory freshness on successful ensure_children_loaded()" — worth noting this should happen after the listing is
++   applied, not before, to avoid stamping freshness for a partially-applied listing on error.
++
++  Summary
++
++  The plan is sound and ready to implement with one key change: make step 5 non-optional. Without poll-based freshness
++  refresh, the optimization degrades to a one-shot benefit per directory load, which undermines the stated goal. Everything
++  else is solid — the safety invariants are well-reasoned, the implementation order is correct, and the test plan covers the
++  important cases.
+
+# 2026-03-26 13:21:46.379108
++All done. Here's a summary of the changes:
++
++  src/virtual_fs/inode.rs — 2 changes:
++  - Updated last_revalidated doc comment to describe dual file/directory semantics
++  - invalidate_children() now clears last_revalidated = None alongside children_loaded = false
++
++  src/virtual_fs/mod.rs — 3 changes:
++  - ensure_children_loaded(): stamps parent.last_revalidated = Some(Instant::now()) after successful listing application
++  - revalidate_file(): added #[cfg(debug_assertions)] assertion that the inode is a file
++  - lookup() fast path: computes parent_fresh from parent's last_revalidated + TTL; returns Hit for clean files when parent
++  is fresh (with debug assertion that parent is a directory), otherwise falls through to NeedsRevalidation as before
++
++  src/virtual_fs/poll.rs — 1 change:
++  - After applying the poll diff, refreshes last_revalidated for all successfully polled directory prefixes that still have
++  children_loaded == true
++
++  src/virtual_fs/tests.rs — 7 additions:
++  - vfs_cached() helper for building a VFS with serve_lookup_from_cache + configurable TTL
++  - lookup_fresh_parent_skips_head_for_clean_file
++  - lookup_stale_parent_falls_back_to_head
++  - lookup_parent_ttl_boundary
++  - invalidate_children_clears_parent_freshness
++  - poll_refreshes_loaded_directory_freshness
++  - dirty_file_does_not_use_parent_freshness_shortcut -  Review all my code changes
+
+# 2026-03-26 13:37:39.522765
++ All 222 pass. Each of the three fixed tests now isolates the parent-freshness path by clearing the file's last_revalidated
++  before the assertion, so the old per-file TTL alone can't suppress the HEAD.
+
+# 2026-03-26 13:39:00.258669
++Does it work if the same remote HF Bucket is being accessed and updated by multiple devices simultaneously?
+
+# 2026-03-26 13:40:52.193255
++Is this a regression?
+
+# 2026-03-26 13:41:52.744321
++It is a regression, in a narrow but real way.
++
++  Before this change, once metadata_ttl expired on a file's own last_revalidated, every lookup() fired a per-file HEAD — even
++   if the parent directory was still loaded. That HEAD could detect a remote change made by another device between poll
++  cycles.
++
++  After this change, if the parent directory was recently confirmed fresh (by initial load or by poll), lookup skips the HEAD
++   for the entire parent TTL window. So the only way to detect another device's modification to an existing file is via poll.
++
++  Concrete scenario:
++  1. Poll runs, confirms directory, stamps parent freshness
++  2. Another device modifies file.txt on the Hub
++  3. Within metadata_ttl, device B does lookup("file.txt")
++  4. Old behavior: file's last_revalidated is stale → HEAD fires → detects the change
++  5. New behavior: parent is fresh → HEAD suppressed → stale data served
++
++  The staleness window is still bounded by metadata_ttl, but the detection mechanism changed. Before, a stale file TTL
++  triggered an immediate HEAD on next access. Now, a fresh parent TTL masks it until either the parent TTL expires or the
++  next poll runs.
++
++  In practice the impact is small — both windows are bounded by the same metadata_ttl — but "same TTL budget" isn't strictly
++  true. The parent timestamp can be refreshed by poll independently of the file timestamp, so a file that would have expired
++  its own TTL and gotten a HEAD can now be kept "fresh" indefinitely by repeated poll confirmations, even though its content
++  changed remotely between two polls.
++
++  Want me to fix this? The cleanest approach would be to only let parent freshness suppress HEAD when the file has never been
++   individually revalidated (i.e., last_revalidated was set by insert(), not by a prior revalidate_file() call), preserving
++  the per-file HEAD cadence for files that have already entered the revalidation cycle.
+
+# 2026-03-26 13:56:44.201530
++Clean. Here's what changed:
++
++  src/virtual_fs/inode.rs — new field last_head_revalidated: Option<Instant> on InodeEntry, initialized to None in both the
++  root inode constructor and insert(). The doc comment on last_revalidated now says directory-only; the new field's doc
++  explains the cold→hot transition.
++
++  src/virtual_fs/mod.rs — revalidate_file() now reads/writes last_head_revalidated instead of last_revalidated. The lookup()
++  fast path has three branches:
++  1. Hot file (last_head_revalidated.is_some()): uses per-file HEAD cadence, ignores parent freshness
++  2. Cold file + fresh parent: trusts parent listing, skips HEAD
++  3. Cold file + stale parent: fires HEAD (which promotes the file to hot)
++
++  src/virtual_fs/tests.rs — simplified the three false-positive tests (no need to manually clear file timestamps since
++  last_head_revalidated is None by default). Added hot_file_uses_per_file_cadence_ignoring_parent_freshness which is the key
++  regression test: it promotes a file to hot via HEAD, refreshes the parent, expires the file's per-file TTL, and verifies
++  lookup still fires a HEAD.
+
+# 2026-03-26 14:11:06.162678
++Are all the tests that we introduced in 71223f0819826dace485e2f5f36f41d00c21030e necessary, or are they a little bit redundant?
+
+# 2026-03-26 23:56:49.033196
++Try to find logic errors in that code base. Prove your claims.
+
+# 2026-04-02 14:37:29.035343
++Can "hf-mount" encryption work with repos not just buckets?
+
+# 2026-04-16 23:39:46.892475
++/audit
+
+# 2026-04-17 00:27:59.991322
++/audit --resume
+
+# 2026-04-17 00:47:43.547215
++/quit

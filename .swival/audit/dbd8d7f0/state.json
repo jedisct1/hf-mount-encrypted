@@ -1,0 +1,1947 @@
+{
+  "run_id": "dbd8d7f0",
+  "scope": {
+    "branch": "main",
+    "commit": "3e8e59765e30ddc73b1b77ca9fd65df9d9f4722a",
+    "tracked_files": [
+      ".github/workflows/bump-release.yml",
+      ".github/workflows/ci.yml",
+      ".github/workflows/release.yml",
+      ".gitignore",
+      ".vscode/settings.json",
+      "Cargo.lock",
+      "Cargo.toml",
+      "Dockerfile",
+      "LICENSE",
+      "README.md",
+      "install.sh",
+      "rustfmt.toml",
+      "src/bin/hf-mount-fuse-sidecar.rs",
+      "src/bin/hf-mount-fuse.rs",
+      "src/bin/hf-mount-nfs.rs",
+      "src/bin/hf-mount.rs",
+      "src/cached_xet_client.rs",
+      "src/daemon.rs",
+      "src/error.rs",
+      "src/fuse.rs",
+      "src/hub_api.rs",
+      "src/lib.rs",
+      "src/nfs.rs",
+      "src/setup.rs",
+      "src/test_mocks.rs",
+      "src/virtual_fs/flush.rs",
+      "src/virtual_fs/inode.rs",
+      "src/virtual_fs/mod.rs",
+      "src/virtual_fs/poll.rs",
+      "src/virtual_fs/prefetch.rs",
+      "src/virtual_fs/tests.rs",
+      "src/xet.rs",
+      "tests/bench.rs",
+      "tests/common/bench.rs",
+      "tests/common/fs_tests.rs",
+      "tests/common/mod.rs",
+      "tests/fio_bench.rs",
+      "tests/fsx.rs",
+      "tests/fuse_ops.rs",
+      "tests/nfs_ops.rs",
+      "tests/pjdfstest.rs",
+      "tests/repo_ops.rs",
+      "tests/warm_cache_bench.rs",
+      "tests/xfstests.rs"
+    ],
+    "mandatory_files": [
+      ".github/workflows/bump-release.yml",
+      ".github/workflows/ci.yml",
+      ".github/workflows/release.yml",
+      ".vscode/settings.json",
+      "Cargo.toml",
+      "install.sh",
+      "rustfmt.toml",
+      "src/bin/hf-mount-fuse-sidecar.rs",
+      "src/bin/hf-mount-fuse.rs",
+      "src/bin/hf-mount-nfs.rs",
+      "src/bin/hf-mount.rs",
+      "src/cached_xet_client.rs",
+      "src/daemon.rs",
+      "src/error.rs",
+      "src/fuse.rs",
+      "src/hub_api.rs",
+      "src/lib.rs",
+      "src/nfs.rs",
+      "src/setup.rs",
+      "src/test_mocks.rs",
+      "src/virtual_fs/flush.rs",
+      "src/virtual_fs/inode.rs",
+      "src/virtual_fs/mod.rs",
+      "src/virtual_fs/poll.rs",
+      "src/virtual_fs/prefetch.rs",
+      "src/virtual_fs/tests.rs",
+      "src/xet.rs",
+      "tests/bench.rs",
+      "tests/common/bench.rs",
+      "tests/common/fs_tests.rs",
+      "tests/common/mod.rs",
+      "tests/fio_bench.rs",
+      "tests/fsx.rs",
+      "tests/fuse_ops.rs",
+      "tests/nfs_ops.rs",
+      "tests/pjdfstest.rs",
+      "tests/repo_ops.rs",
+      "tests/warm_cache_bench.rs",
+      "tests/xfstests.rs"
+    ],
+    "focus": null
+  },
+  "queued_files": [
+    "src/virtual_fs/mod.rs",
+    "src/bin/hf-mount-fuse-sidecar.rs",
+    "tests/xfstests.rs",
+    "src/hub_api.rs",
+    "src/virtual_fs/tests.rs",
+    "src/fuse.rs",
+    "tests/common/mod.rs",
+    "tests/fsx.rs",
+    "src/cached_xet_client.rs",
+    "src/setup.rs",
+    "src/virtual_fs/inode.rs",
+    "tests/pjdfstest.rs",
+    "src/virtual_fs/flush.rs",
+    "src/daemon.rs",
+    "src/nfs.rs",
+    "tests/warm_cache_bench.rs",
+    "tests/fio_bench.rs",
+    "src/test_mocks.rs",
+    "tests/common/bench.rs",
+    ".github/workflows/bump-release.yml",
+    "src/xet.rs",
+    "tests/bench.rs",
+    "tests/fuse_ops.rs",
+    "tests/nfs_ops.rs",
+    "src/virtual_fs/poll.rs",
+    ".github/workflows/ci.yml",
+    "src/bin/hf-mount.rs",
+    "tests/common/fs_tests.rs",
+    "src/virtual_fs/prefetch.rs",
+    "tests/repo_ops.rs",
+    "Cargo.toml",
+    ".github/workflows/release.yml",
+    "src/bin/hf-mount-fuse.rs",
+    "install.sh",
+    "src/error.rs",
+    ".vscode/settings.json",
+    "rustfmt.toml",
+    "src/bin/hf-mount-nfs.rs",
+    "src/lib.rs"
+  ],
+  "reviewed_files": [
+    ".github/workflows/bump-release.yml",
+    ".github/workflows/ci.yml",
+    ".github/workflows/release.yml",
+    ".vscode/settings.json",
+    "Cargo.toml",
+    "install.sh",
+    "rustfmt.toml",
+    "src/bin/hf-mount-fuse-sidecar.rs",
+    "src/bin/hf-mount-fuse.rs",
+    "src/bin/hf-mount-nfs.rs",
+    "src/bin/hf-mount.rs",
+    "src/cached_xet_client.rs",
+    "src/daemon.rs",
+    "src/error.rs",
+    "src/fuse.rs",
+    "src/hub_api.rs",
+    "src/lib.rs",
+    "src/nfs.rs",
+    "src/setup.rs",
+    "src/test_mocks.rs",
+    "src/virtual_fs/flush.rs",
+    "src/virtual_fs/inode.rs",
+    "src/virtual_fs/mod.rs",
+    "src/virtual_fs/poll.rs",
+    "src/virtual_fs/prefetch.rs",
+    "src/virtual_fs/tests.rs",
+    "src/xet.rs",
+    "tests/bench.rs",
+    "tests/common/bench.rs",
+    "tests/common/fs_tests.rs",
+    "tests/common/mod.rs",
+    "tests/fio_bench.rs",
+    "tests/fsx.rs",
+    "tests/fuse_ops.rs",
+    "tests/nfs_ops.rs",
+    "tests/pjdfstest.rs",
+    "tests/repo_ops.rs",
+    "tests/warm_cache_bench.rs",
+    "tests/xfstests.rs"
+  ],
+  "triage_records": {
+    "src/virtual_fs/mod.rs": {
+      "path": "src/virtual_fs/mod.rs",
+      "priority": "ESCALATE_MEDIUM",
+      "confidence": "medium",
+      "bug_classes": [
+        "path_traversal",
+        "trust_boundary_breaks",
+        "cross_component_contracts",
+        "data_integrity"
+      ],
+      "summary": "Remote-controlled paths and symlink targets flow into VFS namespace and filesystem cache paths; review path normalization and trust assumptions.",
+      "relevant_symbols": [
+        "ensure_children_loaded",
+        "create",
+        "mkdir",
+        "symlink",
+        "rename_validate",
+        "rename_remote",
+        "open_readonly",
+        "same_process"
+      ],
+      "suspicious_flows": [
+        "Hub `list_tree` entry.path is converted into relative names and inserted into inode table without visible path-component validation",
+        "User-supplied `name`/`newname` values are combined into full paths for remote batch ops via `inode::child_path` with no local validation shown here",
+        "`symlink` stores arbitrary `target` from caller for later `readlink`, crossing VFS trust boundary",
+        "HTTP fallback cache file path in `open_readonly` is derived from remote source/path hash and opened from shared staging dir; relies on staging dir safety and collision assumptions"
+      ],
+      "needs_followup": true
+    },
+    "src/bin/hf-mount-fuse-sidecar.rs": {
+      "path": "src/bin/hf-mount-fuse-sidecar.rs",
+      "priority": "ESCALATE_MEDIUM",
+      "confidence": "medium",
+      "bug_classes": [
+        "trust_boundary_breaks",
+        "unsafe_data_flow",
+        "input_validation",
+        "cross_component_contracts",
+        "dangerous_api_misuse"
+      ],
+      "summary": "Sidecar trusts shared tmp_dir contents and SCM_RIGHTS fd without peer validation or path hardening.",
+      "relevant_symbols": [
+        "discover_pending",
+        "connect_and_receive_fd",
+        "run_mount",
+        "MountArgs::try_parse_from",
+        "OwnedFd::from_raw_fd"
+      ],
+      "suspicious_flows": [
+        "tmp_dir/.volumes entries -> args file lines -> MountArgs parsing -> build()/mount_fuse",
+        "filesystem-derived socket_path -> UnixStream::connect -> recvmsg SCM_RIGHTS -> OwnedFd::from_raw_fd",
+        "shared tmp_dir marker files -> readiness/error signaling consumed by CSI driver"
+      ],
+      "needs_followup": true
+    },
+    "tests/xfstests.rs": {
+      "path": "tests/xfstests.rs",
+      "priority": "SKIP",
+      "confidence": "high",
+      "bug_classes": [
+        "command_execution",
+        "trust_boundary_breaks"
+      ],
+      "summary": "Integration test shells out with fixed commands; inputs appear controlled and test-only.",
+      "relevant_symbols": [
+        "ensure_xfstests",
+        "apply_fuse_patches",
+        "create_mount_wrapper",
+        "write_config",
+        "test_xfstests_generic"
+      ],
+      "suspicious_flows": [
+        "`sh -c` installs packages and clones xfstests into fixed `/tmp/xfstests` path",
+        "wrapper script executes binary with env-derived `HF_TOKEN` and `HF_XFSTESTS_BUCKET`",
+        "writes `/usr/local/bin/hf-mount` and uses `sudo tee/chmod` during test setup"
+      ],
+      "needs_followup": false
+    },
+    "src/hub_api.rs": {
+      "path": "src/hub_api.rs",
+      "priority": "ESCALATE_MEDIUM",
+      "confidence": "medium",
+      "bug_classes": [
+        "trust_boundary_breaks",
+        "unsafe_data_flow",
+        "path_traversal",
+        "resource_lifecycle",
+        "cross_component_contracts"
+      ],
+      "summary": "Remote-supplied paths and pagination URLs flow into filesystem writes and follow-up requests with limited validation.",
+      "relevant_symbols": [
+        "parse_link_next",
+        "list_tree_bucket",
+        "list_tree_repo",
+        "download_file_http",
+        "prefixed_path",
+        "strip_path_prefix",
+        "split_path_prefix",
+        "HubApiClient::auth"
+      ],
+      "suspicious_flows": [
+        "`Link` header parsed by `parse_link_next` is used directly as next request URL in tree listing loops",
+        "remote `TreeEntry.path` values are exposed downstream after only prefix stripping, with no normalization shown",
+        "caller-provided `dest` is written via temp file and rename; safety depends on upstream path-to-disk mapping invariants",
+        "token file path from config is synchronously reread and trusted for bearer auth without provenance checks"
+      ],
+      "needs_followup": true
+    },
+    "src/virtual_fs/tests.rs": {
+      "path": "src/virtual_fs/tests.rs",
+      "priority": "SKIP",
+      "confidence": "high",
+      "bug_classes": [
+        "concurrency",
+        "data_integrity",
+        "resource_lifecycle",
+        "edge_case_failures"
+      ],
+      "summary": "Test-only file exercises VFS edge cases; no direct production-facing dangerous logic introduced here.",
+      "relevant_symbols": [
+        "write_blocking",
+        "vfs_simple",
+        "vfs_advanced",
+        "vfs_readonly",
+        "vfs_repo",
+        "VirtualFs::apply_poll_diff",
+        "super::same_process"
+      ],
+      "suspicious_flows": [
+        "Tests cover commit/release ordering and PID-mismatch flush deferral",
+        "Tests model concurrent shutdown and truncate/write serialization races",
+        "Tests validate orphan inode cleanup and open_files leak scenarios",
+        "Tests exercise poll diff behavior for remote updates/deletions"
+      ],
+      "needs_followup": false
+    },
+    "src/fuse.rs": {
+      "path": "src/fuse.rs",
+      "priority": "SKIP",
+      "confidence": "medium",
+      "bug_classes": [
+        "error_handling",
+        "trust_boundary_breaks",
+        "cross_component_contracts"
+      ],
+      "summary": "FUSE adapter mostly forwards validated requests; only mild follow-up around unmount command/path handling and VFS trust contracts.",
+      "relevant_symbols": [
+        "FuseAdapter",
+        "mount_fuse",
+        "unmount_fuse",
+        "wait_for_signal",
+        "FuseSession::wait"
+      ],
+      "suspicious_flows": [
+        "FUSE request fields forwarded into `virtual_fs` methods for auth/path policy enforcement",
+        "mount point converted with `to_string_lossy` before libc/command unmount fallback",
+        "pre-opened `fuse_fd` trust delegated to caller/setup"
+      ],
+      "needs_followup": false
+    },
+    "tests/common/mod.rs": {
+      "path": "tests/common/mod.rs",
+      "priority": "SKIP",
+      "confidence": "high",
+      "bug_classes": [
+        "command_execution",
+        "input_validation",
+        "path_traversal",
+        "error_handling"
+      ],
+      "summary": "Test helper code spawns local binaries and writes temp files, but only with test-controlled inputs and no strong security signal.",
+      "relevant_symbols": [
+        "setup_bucket_with_file",
+        "mount_bucket",
+        "mount_repo",
+        "mount_bucket_nfs",
+        "unmount_with"
+      ],
+      "suspicious_flows": [
+        "test-controlled filename joined into temp staging path",
+        "test arguments passed to spawned hf-mount binaries",
+        "mount_point passed to unmount command as argument"
+      ],
+      "needs_followup": false
+    },
+    "tests/fsx.rs": {
+      "path": "tests/fsx.rs",
+      "priority": "SKIP",
+      "confidence": "high",
+      "bug_classes": [
+        "command_execution",
+        "resource_lifecycle",
+        "error_handling"
+      ],
+      "summary": "Test-only helper shells out to build and run fsx, but inputs are effectively fixed and low-risk.",
+      "relevant_symbols": [
+        "ensure_fsx",
+        "run_fsx",
+        "test_fsx_data_integrity",
+        "test_fsx_paranoid"
+      ],
+      "suspicious_flows": [
+        "`bash -c` executes a formatted clone/build command under `/tmp`",
+        "`sudo` launches `/tmp/xfstests/ltp/fsx` against a generated `/tmp` path",
+        "cleanup ignores file and directory removal errors"
+      ],
+      "needs_followup": false
+    },
+    "src/cached_xet_client.rs": {
+      "path": "src/cached_xet_client.rs",
+      "priority": "SKIP",
+      "confidence": "medium",
+      "bug_classes": [
+        "concurrency",
+        "error_handling",
+        "edge_case_failures"
+      ],
+      "summary": "Cache wrapper and single-flight logic look bounded; no concrete security-sensitive flaw stands out in this file alone.",
+      "relevant_symbols": [
+        "CachedXetClient::get_reconstruction",
+        "derive_range_response",
+        "CacheEntry::is_valid",
+        "CachedXetClient::new_with_ttl"
+      ],
+      "suspicious_flows": [
+        "Concurrent waiters ignore broadcast receive errors and simply retry the cache/CAS path",
+        "Range responses can be locally derived from full-plan metadata, creating behavioral but not clearly security-relevant divergence",
+        "Arbitrary eviction may affect availability/performance under churn, not obviously trust-boundary breaking"
+      ],
+      "needs_followup": false
+    },
+    "src/setup.rs": {
+      "path": "src/setup.rs",
+      "priority": "ESCALATE_MEDIUM",
+      "confidence": "medium",
+      "bug_classes": [
+        "trust_boundary_breaks",
+        "unsafe_data_flow",
+        "resource_lifecycle",
+        "error_handling",
+        "cross_component_contracts"
+      ],
+      "summary": "CLI-controlled endpoints, paths, and mount settings flow into privileged filesystem and remote client setup with limited validation.",
+      "relevant_symbols": [
+        "build",
+        "setup",
+        "init_tracing",
+        "build_cas_config",
+        "raise_fd_limit",
+        "MountOptions",
+        "Source"
+      ],
+      "suspicious_flows": [
+        "`hub_endpoint` from CLI/env passed into `HubApiClient::from_source`",
+        "`cache_dir` from CLI used for directory creation, staging, and cache storage",
+        "`mount_point` and source path prefix parsed from user input then used for local mount setup",
+        "token refresh result feeds `default_config` and remote CAS client creation",
+        "global env vars mutated in `init_tracing` before remote client behavior is configured"
+      ],
+      "needs_followup": true
+    },
+    "src/virtual_fs/inode.rs": {
+      "path": "src/virtual_fs/inode.rs",
+      "priority": "ESCALATE_MEDIUM",
+      "confidence": "medium",
+      "bug_classes": [
+        "data_integrity",
+        "invariant_violations",
+        "cross_component_contracts",
+        "edge_case_failures"
+      ],
+      "summary": "Inode table mutations risk inconsistent path/link state across rename, unlink, and recursive subtree updates.",
+      "relevant_symbols": [
+        "InodeTable::update_subtree_paths",
+        "InodeTable::move_child",
+        "InodeTable::unlink_one",
+        "InodeTable::remove",
+        "InodeTable::insert_path",
+        "InodeTable::remove_orphan",
+        "child_path"
+      ],
+      "suspicious_flows": [
+        "caller-controlled names/paths become canonical `full_path` keys without normalization",
+        "`move_child` updates parent/name but leaves path mappings to caller, creating split-brain state if call ordering fails",
+        "`update_subtree_paths` recursively rewrites descendants and may revisit shared children/hardlink-like structures",
+        "`unlink_one` removes parent edge and path mapping before inode lifecycle is fully resolved",
+        "public `insert_path`/`remove_path` allow external code to desynchronize `path_to_inode` from inode entries"
+      ],
+      "needs_followup": true
+    },
+    "tests/pjdfstest.rs": {
+      "path": "tests/pjdfstest.rs",
+      "priority": "SKIP",
+      "confidence": "high",
+      "bug_classes": [
+        "command_execution"
+      ],
+      "summary": "Test-only helper runs fixed shell commands and sudo prove with no untrusted input flow in this file.",
+      "relevant_symbols": [
+        "ensure_pjdfstest",
+        "run_prove",
+        "test_pjdfstest",
+        "parse_field",
+        "print_results"
+      ],
+      "suspicious_flows": [
+        "Fixed `sh -c` build pipeline clones and builds under `/tmp/pjdfstest`",
+        "`sudo prove` executes discovered test files from the checked-out pjdfstest tree"
+      ],
+      "needs_followup": false
+    },
+    "src/virtual_fs/flush.rs": {
+      "path": "src/virtual_fs/flush.rs",
+      "priority": "ESCALATE_MEDIUM",
+      "confidence": "medium",
+      "bug_classes": [
+        "data_integrity",
+        "concurrency",
+        "cross_component_contracts",
+        "edge_case_failures"
+      ],
+      "summary": "Batched flush/delete logic has acknowledged races and fragile path-prefix cancellation semantics worth deeper integrity review.",
+      "relevant_symbols": [
+        "FlushManager::cancel_delete_prefix",
+        "FlushManager::shutdown",
+        "flush_loop",
+        "flush_pending_deletes",
+        "flush_batch",
+        "FlushItem"
+      ],
+      "suspicious_flows": [
+        "`cancel_delete_prefix` uses raw `starts_with(prefix)` on paths, risking overbroad delete cancellation for sibling prefixes",
+        "`flush_pending_deletes` takes and clears queue before remote commit; concurrent recreate/cancel operations cannot revoke in-flight deletes",
+        "`flush_batch` snapshots inode path/delete state, then later commits against Hub after async upload, creating rename/recreate race windows",
+        "`shutdown` drains dirty inos and queued deletes via separate phases, so ordering across final adds/deletes depends on external Hub semantics"
+      ],
+      "needs_followup": true
+    },
+    "src/daemon.rs": {
+      "path": "src/daemon.rs",
+      "priority": "ESCALATE_MEDIUM",
+      "confidence": "medium",
+      "bug_classes": [
+        "trust_boundary_breaks",
+        "resource_lifecycle",
+        "dangerous_api_misuse",
+        "edge_case_failures"
+      ],
+      "summary": "Daemon control trusts env and filesystem state in ways that may enable local misuse or stale-process confusion.",
+      "relevant_symbols": [
+        "state_dir",
+        "pid_path",
+        "log_path",
+        "DaemonGuard::from_env",
+        "read_pid_file",
+        "is_our_daemon",
+        "daemonize",
+        "stop_daemon"
+      ],
+      "suspicious_flows": [
+        "HOME influences state_dir and pid/log file locations",
+        "HF_MOUNT_DAEMON_PID_FILE from environment is removed then later deleted on Drop",
+        "PID file contents from filesystem drive stop_daemon identity and cleanup decisions",
+        "daemonize writes pid/log files without visible symlink or ownership checks"
+      ],
+      "needs_followup": true
+    },
+    "src/nfs.rs": {
+      "path": "src/nfs.rs",
+      "priority": "ESCALATE_MEDIUM",
+      "confidence": "medium",
+      "bug_classes": [
+        "authorization",
+        "trust_boundary_breaks",
+        "unsafe_data_flow",
+        "concurrency",
+        "data_integrity",
+        "cross_component_contracts"
+      ],
+      "summary": "NFS requests appear to apply client-supplied metadata and writes without visible identity or permission enforcement checks in this adapter.",
+      "relevant_symbols": [
+        "NFSAdapter::setattr",
+        "NFSAdapter::create",
+        "NFSAdapter::mkdir",
+        "NFSAdapter::remove",
+        "NFSAdapter::rename",
+        "NFSAdapter::symlink",
+        "NFSAdapter::write",
+        "NFSAdapter::capabilities",
+        "mount_nfs"
+      ],
+      "suspicious_flows": [
+        "NFS RPC metadata fields uid/gid/mode flow into virtual_fs.setattr/create/symlink without adapter-side credential checks",
+        "write/remove/rename/setattr paths call mutating VirtualFs methods directly based on NFS requests",
+        "read_only only affects advertised capabilities, while mutating RPC methods remain implemented in adapter",
+        "concurrent handle eviction/release races with read/write handle reuse may affect stale-handle behavior and data flush ordering"
+      ],
+      "needs_followup": true
+    },
+    "tests/warm_cache_bench.rs": {
+      "path": "tests/warm_cache_bench.rs",
+      "priority": "SKIP",
+      "confidence": "high",
+      "bug_classes": [],
+      "summary": "Benchmark-style integration test with temp paths and mount orchestration, but no clear exploitable security-sensitive logic in this file.",
+      "relevant_symbols": [
+        "bench_xorb_reconstruction_cache"
+      ],
+      "suspicious_flows": [],
+      "needs_followup": false
+    },
+    "tests/fio_bench.rs": {
+      "path": "tests/fio_bench.rs",
+      "priority": "SKIP",
+      "confidence": "high",
+      "bug_classes": [
+        "command_execution",
+        "error_handling"
+      ],
+      "summary": "Test-only fio benchmark wrapper uses fixed command/paths without meaningful untrusted data flow.",
+      "relevant_symbols": [
+        "run_fio_suite",
+        "run_fio",
+        "test_fio_compare",
+        "print_table"
+      ],
+      "suspicious_flows": [
+        "`Command::new(\"fio\")` executes external binary from PATH in test context",
+        "panic/unwind around mount and benchmark may leave cleanup gaps on abnormal failures"
+      ],
+      "needs_followup": false
+    },
+    "src/test_mocks.rs": {
+      "path": "src/test_mocks.rs",
+      "priority": "SKIP",
+      "confidence": "high",
+      "bug_classes": [],
+      "summary": "Test-only mock implementations and VFS builder show no production-reachable security-sensitive logic worth deep review.",
+      "relevant_symbols": [
+        "MockHub",
+        "MockXet",
+        "MockStreamingWriter",
+        "MockDownloadStream",
+        "make_test_vfs"
+      ],
+      "suspicious_flows": [],
+      "needs_followup": false
+    },
+    "tests/common/bench.rs": {
+      "path": "tests/common/bench.rs",
+      "priority": "SKIP",
+      "confidence": "high",
+      "bug_classes": [],
+      "summary": "Test benchmark helper performs local file I/O and timing only; no clear security-relevant path warrants deeper review.",
+      "relevant_symbols": [
+        "run_read_benchmarks",
+        "run_write_benchmark",
+        "run_raw_cleaner_benchmark",
+        "BenchResult",
+        "WriteBenchResult"
+      ],
+      "suspicious_flows": [],
+      "needs_followup": false
+    },
+    ".github/workflows/bump-release.yml": {
+      "path": ".github/workflows/bump-release.yml",
+      "priority": "SKIP",
+      "confidence": "high",
+      "bug_classes": [
+        "input_validation",
+        "dangerous_api_misuse",
+        "edge_case_failures"
+      ],
+      "summary": "Manual release workflow with bounded inputs; mostly operational failure risk, not a clear security-sensitive code path.",
+      "relevant_symbols": [
+        "inputs.bump",
+        "steps.detect.outputs.detected",
+        "steps.version.outputs.new"
+      ],
+      "suspicious_flows": [
+        "workflow_dispatch input selects version bump and drives git tag creation",
+        "commit subjects are parsed to infer bump type",
+        "computed version string is written into Cargo.toml and pushed to main"
+      ],
+      "needs_followup": false
+    },
+    "src/xet.rs": {
+      "path": "src/xet.rs",
+      "priority": "ESCALATE_MEDIUM",
+      "confidence": "medium",
+      "bug_classes": [
+        "unsafe_data_flow",
+        "trust_boundary_breaks",
+        "path_traversal",
+        "error_handling",
+        "edge_case_failures"
+      ],
+      "summary": "Staging paths and file download destinations rely on external callers with weak local safeguards and brittle failure handling.",
+      "relevant_symbols": [
+        "XetOps::download_to_file",
+        "XetSessions::download_stream",
+        "XetSessions::warm_reconstruction_cache",
+        "StagingDir::new",
+        "StagingDir::path",
+        "rand_u64",
+        "StreamingWriterOps::finish_boxed"
+      ],
+      "suspicious_flows": [
+        "Caller-controlled `dest` path is passed into `session.download_file` without local validation",
+        "`cache_dir` directly determines staging root; `create_dir_all` follows filesystem state and panics on failure",
+        "Staging filename unpredictability uses `DefaultHasher` over time/pid, not a strong secret",
+        "Bounded range download builds `FileRange::new(offset,end)` without local invariant checks",
+        "`warm_reconstruction_cache` suppresses all CAS errors, hiding trust-boundary failures"
+      ],
+      "needs_followup": true
+    },
+    "tests/bench.rs": {
+      "path": "tests/bench.rs",
+      "priority": "SKIP",
+      "confidence": "high",
+      "bug_classes": [
+        "resource_lifecycle",
+        "error_handling"
+      ],
+      "summary": "Benchmark test orchestrates mounts and cleanup but shows no concrete exploitable path in this file alone.",
+      "relevant_symbols": [
+        "test_bench",
+        "common::setup_bucket",
+        "common::mount_bucket",
+        "common::mount_bucket_nfs",
+        "common::unmount",
+        "common::unmount_nfs"
+      ],
+      "suspicious_flows": [
+        "panic-catching around mount lifecycle may leave resources behind on abnormal paths",
+        "temporary paths under /tmp are process-derived but this is test-only harness code"
+      ],
+      "needs_followup": false
+    },
+    "tests/fuse_ops.rs": {
+      "path": "tests/fuse_ops.rs",
+      "priority": "SKIP",
+      "confidence": "high",
+      "bug_classes": [],
+      "summary": "Integration tests orchestrate FUSE mount behavior but add no direct security-relevant logic in this file.",
+      "relevant_symbols": [
+        "test_fuse_simple_writes",
+        "test_fuse_advanced_writes",
+        "test_fuse_revalidation"
+      ],
+      "suspicious_flows": [],
+      "needs_followup": false
+    },
+    "tests/nfs_ops.rs": {
+      "path": "tests/nfs_ops.rs",
+      "priority": "SKIP",
+      "confidence": "high",
+      "bug_classes": [],
+      "summary": "Integration tests exercise NFS behavior but add no direct production-side attack surface or risky logic.",
+      "relevant_symbols": [
+        "test_nfs_read_only",
+        "test_nfs_writes"
+      ],
+      "suspicious_flows": [],
+      "needs_followup": false
+    },
+    "src/virtual_fs/poll.rs": {
+      "path": "src/virtual_fs/poll.rs",
+      "priority": "SKIP",
+      "confidence": "medium",
+      "bug_classes": [
+        "concurrency",
+        "error_handling",
+        "cross_component_contracts"
+      ],
+      "summary": "Background polling and cache invalidation logic looks stateful but shows no concrete exploitable security path in this file alone.",
+      "relevant_symbols": [
+        "VirtualFs::poll_remote_changes",
+        "VirtualFs::apply_poll_diff",
+        "InodeTable::loaded_dir_prefixes",
+        "InodeTable::file_snapshot",
+        "InodeTable::update_remote_file",
+        "InodeTable::unlink_one",
+        "InodeTable::remove",
+        "InodeTable::invalidate_children",
+        "has_open_handles_for"
+      ],
+      "suspicious_flows": [
+        "Remote tree listings influence inode deletion/update decisions",
+        "Concurrent snapshot-then-apply pattern relies on InodeTable invariants",
+        "Negative cache eviction depends on path-prefix matching semantics"
+      ],
+      "needs_followup": false
+    },
+    ".github/workflows/ci.yml": {
+      "path": ".github/workflows/ci.yml",
+      "priority": "SKIP",
+      "confidence": "high",
+      "bug_classes": [],
+      "summary": "CI workflow mostly runs tests and posts sanitized PR comments; no concrete repository-grounded exploit path stands out.",
+      "relevant_symbols": [],
+      "suspicious_flows": [],
+      "needs_followup": false
+    },
+    "src/bin/hf-mount.rs": {
+      "path": "src/bin/hf-mount.rs",
+      "priority": "ESCALATE_MEDIUM",
+      "confidence": "medium",
+      "bug_classes": [
+        "command_execution",
+        "unsafe_data_flow",
+        "trust_boundary_breaks",
+        "error_handling"
+      ],
+      "summary": "CLI forwards unvalidated args/env into exec-selected backend and daemon metadata, warranting daemon/backend contract review.",
+      "relevant_symbols": [
+        "main",
+        "exec_backend",
+        "Command::Start",
+        "hf_mount::daemon::daemonize",
+        "hf_mount::daemon::stop_daemon"
+      ],
+      "suspicious_flows": [
+        "CLI `args` forwarded directly to backend via `Command::args`",
+        "backend binary chosen from sibling path or PATH and then `exec`'d",
+        "mount point heuristically derived from trailing args before daemonization/PID file setup",
+        "unsafe `fcntl` manipulation of inherited fd without checking return values"
+      ],
+      "needs_followup": true
+    },
+    "tests/common/fs_tests.rs": {
+      "path": "tests/common/fs_tests.rs",
+      "priority": "SKIP",
+      "confidence": "high",
+      "bug_classes": [],
+      "summary": "Test helper exercises filesystem semantics; no repository-grounded security-sensitive implementation change in this file.",
+      "relevant_symbols": [
+        "list_tree_all",
+        "run_read_tests",
+        "run_write_tests",
+        "verify_hub_state",
+        "run_simple_write_tests",
+        "verify_simple_hub_state",
+        "run_revalidation_test"
+      ],
+      "suspicious_flows": [],
+      "needs_followup": false
+    },
+    "src/virtual_fs/prefetch.rs": {
+      "path": "src/virtual_fs/prefetch.rs",
+      "priority": "SKIP",
+      "confidence": "high",
+      "bug_classes": [
+        "edge_case_failures",
+        "arithmetic"
+      ],
+      "summary": "Prefetch buffer bookkeeping looks self-contained; only minor offset arithmetic edge cases merit routine testing, not deep security review.",
+      "relevant_symbols": [
+        "PrefetchState::prepare_fetch",
+        "PrefetchState::try_serve_forward",
+        "PrefetchState::drain_to_seek",
+        "read_chunk_range"
+      ],
+      "suspicious_flows": [
+        "`prepare_fetch` computes `file_size - offset`, relying on callers not passing out-of-range offsets",
+        "buffer offset/length bookkeeping depends on internal invariants between `chunks_len`, `buf_start`, and `chunks_front_offset`"
+      ],
+      "needs_followup": false
+    },
+    "tests/repo_ops.rs": {
+      "path": "tests/repo_ops.rs",
+      "priority": "SKIP",
+      "confidence": "high",
+      "bug_classes": [],
+      "summary": "Integration test reads mounted repo data and asserts read-only behavior; no direct security-relevant logic changed here.",
+      "relevant_symbols": [
+        "test_repo_fuse_read",
+        "run_repo_read_tests"
+      ],
+      "suspicious_flows": [],
+      "needs_followup": false
+    },
+    "Cargo.toml": {
+      "path": "Cargo.toml",
+      "priority": "SKIP",
+      "confidence": "high",
+      "bug_classes": [],
+      "summary": "Manifest-only change lists dependencies and binaries without code paths to assess for concrete security issues.",
+      "relevant_symbols": [],
+      "suspicious_flows": [],
+      "needs_followup": false
+    },
+    ".github/workflows/release.yml": {
+      "path": ".github/workflows/release.yml",
+      "priority": "SKIP",
+      "confidence": "high",
+      "bug_classes": [],
+      "summary": "Release workflow builds and publishes artifacts without repository-specific risky data flows or security-sensitive logic worth deep review.",
+      "relevant_symbols": [],
+      "suspicious_flows": [],
+      "needs_followup": false
+    },
+    "src/bin/hf-mount-fuse.rs": {
+      "path": "src/bin/hf-mount-fuse.rs",
+      "priority": "SKIP",
+      "confidence": "high",
+      "bug_classes": [],
+      "summary": "Thin CLI entrypoint delegates setup and FUSE mounting without adding security-relevant logic.",
+      "relevant_symbols": [
+        "main",
+        "setup",
+        "DaemonGuard::from_env",
+        "mount_fuse",
+        "session.wait"
+      ],
+      "suspicious_flows": [],
+      "needs_followup": false
+    },
+    "install.sh": {
+      "path": "install.sh",
+      "priority": "SKIP",
+      "confidence": "high",
+      "bug_classes": [],
+      "summary": "Simple installer script downloads release binaries to a user-controlled directory; no strong evidence of repository-specific security risk here.",
+      "relevant_symbols": [
+        "REPO",
+        "INSTALL_DIR",
+        "BASE_URL",
+        "BINARY"
+      ],
+      "suspicious_flows": [],
+      "needs_followup": false
+    },
+    "src/error.rs": {
+      "path": "src/error.rs",
+      "priority": "SKIP",
+      "confidence": "high",
+      "bug_classes": [
+        "error_handling"
+      ],
+      "summary": "Shared error wrapper and retry-status helper show no concrete security-sensitive logic worth deep review.",
+      "relevant_symbols": [
+        "Error",
+        "Error::hub",
+        "Error::hub_status",
+        "fmt::Display for Error",
+        "is_retryable_status",
+        "Result"
+      ],
+      "suspicious_flows": [],
+      "needs_followup": false
+    },
+    ".vscode/settings.json": {
+      "path": ".vscode/settings.json",
+      "priority": "SKIP",
+      "confidence": "high",
+      "bug_classes": [],
+      "summary": "Editor workspace settings only; no runtime or security-relevant code paths.",
+      "relevant_symbols": [],
+      "suspicious_flows": [],
+      "needs_followup": false
+    },
+    "rustfmt.toml": {
+      "path": "rustfmt.toml",
+      "priority": "SKIP",
+      "confidence": "high",
+      "bug_classes": [],
+      "summary": "Formatting configuration only; no executable logic or security-relevant data flow.",
+      "relevant_symbols": [],
+      "suspicious_flows": [],
+      "needs_followup": false
+    },
+    "src/bin/hf-mount-nfs.rs": {
+      "path": "src/bin/hf-mount-nfs.rs",
+      "priority": "SKIP",
+      "confidence": "high",
+      "bug_classes": [],
+      "summary": "Thin NFS binary entrypoint delegates all logic to shared setup and mount helpers.",
+      "relevant_symbols": [
+        "main",
+        "setup",
+        "DaemonGuard::from_env",
+        "hf_mount::nfs::mount_nfs"
+      ],
+      "suspicious_flows": [],
+      "needs_followup": false
+    },
+    "src/lib.rs": {
+      "path": "src/lib.rs",
+      "priority": "SKIP",
+      "confidence": "high",
+      "bug_classes": [],
+      "summary": "Module export file only; no executable logic or security-relevant data flow visible.",
+      "relevant_symbols": [],
+      "suspicious_flows": [],
+      "needs_followup": false
+    }
+  },
+  "candidate_files": [
+    "src/virtual_fs/mod.rs",
+    "src/bin/hf-mount-fuse-sidecar.rs",
+    "src/hub_api.rs",
+    "src/setup.rs",
+    "src/virtual_fs/inode.rs",
+    "src/virtual_fs/flush.rs",
+    "src/daemon.rs",
+    "src/nfs.rs",
+    "src/xet.rs",
+    "src/bin/hf-mount.rs"
+  ],
+  "deep_reviewed_files": [
+    "src/bin/hf-mount-fuse-sidecar.rs",
+    "src/bin/hf-mount.rs",
+    "src/daemon.rs",
+    "src/hub_api.rs",
+    "src/nfs.rs",
+    "src/setup.rs",
+    "src/virtual_fs/flush.rs",
+    "src/virtual_fs/inode.rs",
+    "src/virtual_fs/mod.rs",
+    "src/xet.rs"
+  ],
+  "proposed_findings": [
+    {
+      "title": "Remote listing names can inject arbitrary path segments",
+      "finding_type": "validation gap",
+      "severity": "high",
+      "locations": [
+        "src/virtual_fs/mod.rs:382"
+      ],
+      "preconditions": [
+        "Hub `list_tree` returns an entry path containing extra `/` segments"
+      ],
+      "proof": [
+        "Remote listing data from `hub_client.list_tree(&prefix)` is trusted in `ensure_children_loaded`. For root listings, `rel_path = entry.path.clone()`. If `rel_path.find('/')` succeeds, the code creates a child directory named the prefix before `/` and stores `dir_full_path = format!(\"{}/{}\", prefix, dir_name)`; otherwise it inserts `rel_path` and `entry.path` directly as name/full_path. No check ensures `entry.path` is a single direct child of `prefix`, so remote-controlled paths inject synthetic descendants and arbitrary full paths into the VFS."
+      ],
+      "fix_outline": "Reject non-direct children; canonicalize and validate `entry.path` stays under `prefix` without extra segments.",
+      "source_file": "src/virtual_fs/mod.rs"
+    },
+    {
+      "title": "User-controlled rename paths sent to backend without component validation",
+      "finding_type": "validation gap",
+      "severity": "medium",
+      "locations": [
+        "src/virtual_fs/mod.rs:1219"
+      ],
+      "preconditions": [
+        "rename caller controls `newname` reaching backend-synced rename path"
+      ],
+      "proof": [
+        "`rename()` accepts user `newname` and only rejects OS junk, then `rename_validate()` builds `new_full_path` with `inode::child_path(&new_parent_entry.full_path, newname)`. `rename_remote()` forwards that path in `BatchOp::AddFile.path` for file renames and derived descendant paths for directory renames. No component validation rejects separators or special segments before `hub_client.batch_operations(&ops)`. Reachable on every writable rename, allowing backend operations on unintended remote paths."
+      ],
+      "fix_outline": "Reject rename names containing path separators or invalid path components before building remote paths.",
+      "source_file": "src/virtual_fs/mod.rs"
+    },
+    {
+      "title": "Symlink target from caller is stored and returned unsanitized",
+      "finding_type": "trust-boundary violation",
+      "severity": "low",
+      "locations": [
+        "src/virtual_fs/mod.rs:1064"
+      ],
+      "preconditions": [
+        "Caller can invoke `symlink` with chosen target bytes"
+      ],
+      "proof": [
+        "`VirtualFs::symlink` takes caller-controlled `target` and stores it verbatim in `entry.symlink_target` (`src/virtual_fs/mod.rs:1064`). `readlink` later returns that stored string unchanged. No validation, normalization, or policy check occurs on the target before crossing into VFS state. Impact: arbitrary symlink destinations are persisted and exposed by the VFS. Reachable through any successful `symlink` call."
+      ],
+      "fix_outline": "Validate or reject unsafe symlink targets before storing; return error on disallowed targets.",
+      "source_file": "src/virtual_fs/mod.rs"
+    },
+    {
+      "title": "Untrusted args file controls mount configuration",
+      "finding_type": "trust-boundary violation",
+      "severity": "medium",
+      "locations": [
+        "src/bin/hf-mount-fuse-sidecar.rs:156"
+      ],
+      "preconditions": [
+        "attacker can write shared `tmp_dir` volume args file"
+      ],
+      "proof": [
+        "Input originates from `tmp_dir/.volumes/*/args`, described as a shared emptyDir. `discover_pending()` reads each file with `read_to_string`, splits lines into tokens, and passes them directly to `MountArgs::try_parse_from`, then `run_mount()` uses the parsed `source` and `options` in `build()`. No check binds files to the CSI driver or validates ownership/source. Any writer to the shared directory can influence mount configuration for a launched mount."
+      ],
+      "fix_outline": "Verify args file provenance before parsing, e.g. trusted ownership/path checks or authenticated driver-signed configs.",
+      "source_file": "src/bin/hf-mount-fuse-sidecar.rs"
+    },
+    {
+      "title": "Sidecar accepts SCM_RIGHTS fd from any socket peer",
+      "finding_type": "trust-boundary violation",
+      "severity": "medium",
+      "locations": [
+        "src/bin/hf-mount-fuse-sidecar.rs:186"
+      ],
+      "preconditions": [
+        "Attacker can create or impersonate the configured Unix socket path"
+      ],
+      "proof": [
+        "Input origin: `connect_and_receive_fd` connects to `socket_path` from discovered volume state. Propagation: after `UnixStream::connect`, it calls `recvmsg`, accepts the first `SCM_RIGHTS` fd, wraps it with `OwnedFd::from_raw_fd`, and passes it to `mount_fuse`. Failing condition: no peer credential or identity check occurs on the connected Unix socket. Impact: sidecar trusts an fd from any socket peer. Reachability: direct on every mount setup."
+      ],
+      "fix_outline": "Verify peer credentials after connect and reject peers not matching the expected CSI driver identity.",
+      "source_file": "src/bin/hf-mount-fuse-sidecar.rs"
+    },
+    {
+      "title": "NFS mount advertises unsupported direct I/O",
+      "finding_type": "invariant violation",
+      "severity": "medium",
+      "locations": [
+        "src/setup.rs:342"
+      ],
+      "preconditions": [
+        "NFS mount started with `--direct-io`"
+      ],
+      "proof": [
+        "CLI input sets `options.direct_io` in `build`. `VirtualFs::new` receives `direct_io: options.direct_io && !is_nfs`, so NFS forcibly disables it. But `MountSetup` later stores `direct_io: options.direct_io` unchanged, after only logging it is ignored for NFS. This leaves setup state claiming direct I/O is enabled while the backing VFS has it disabled, so NFS advertises an unsupported mode and can misconfigure backend-specific mount behavior."
+      ],
+      "fix_outline": "Store `direct_io` as `options.direct_io && !is_nfs` in `MountSetup`.",
+      "source_file": "src/setup.rs"
+    },
+    {
+      "title": "unlink_one leaves directory parent link count unchanged",
+      "finding_type": "invariant violation",
+      "severity": "medium",
+      "locations": [
+        "src/virtual_fs/inode.rs:402"
+      ],
+      "preconditions": [
+        "`unlink_one` is called on a directory child"
+      ],
+      "proof": [
+        "`insert()` increments the parent directory's `nlink` for `InodeKind::Directory`, and `remove()`/`move_child()` decrement it when detaching directories. In `unlink_one()`, input `name` is resolved from `parent.children`, the child entry is removed, `path_to_inode` is deleted, and only the child inode's `nlink` is decremented. No branch adjusts `parent_entry.nlink` for directory children. This leaves parent metadata inconsistent and reachable whenever directory unlink uses `unlink_one`."
+      ],
+      "fix_outline": "When unlinking a directory child, decrement the parent directory's `nlink` alongside removing the child entry.",
+      "source_file": "src/virtual_fs/inode.rs"
+    },
+    {
+      "title": "move_child can create duplicate child names in destination",
+      "finding_type": "invariant violation",
+      "severity": "medium",
+      "locations": [
+        "src/virtual_fs/inode.rs:415"
+      ],
+      "preconditions": [
+        "destination parent already has a child with the new name"
+      ],
+      "proof": [
+        "Caller-controlled `new_parent`/`new_name` reach `move_child`, which removes the old entry then unconditionally `push`es `DirChild { ino, name: new_name }` into `new_parent.children`. Unlike `insert`, no duplicate-name/path check occurs. If `new_parent` already contains `new_name`, `lookup_child` returns the first match while both entries remain, violating unique child-name expectations and leaving ambiguous directory state. Reachable via any rename or cross-parent move using `move_child`."
+      ],
+      "fix_outline": "Before attaching, reject or replace an existing `new_parent` child with `new_name`.",
+      "source_file": "src/virtual_fs/inode.rs"
+    },
+    {
+      "title": "remove_orphan can leave stale parent child entry",
+      "finding_type": "invariant violation",
+      "severity": "medium",
+      "locations": [
+        "src/virtual_fs/inode.rs:466"
+      ],
+      "preconditions": [
+        "inode has nlink 0 and parent still lists it"
+      ],
+      "proof": [
+        "`unlink_one` leaves the inode in `inodes` with `nlink` decremented to 0, while removing only the named `DirChild`. `remove_orphan` later deletes just `inodes[ino]` and `path_to_inode[full_path]` (`src/virtual_fs/inode.rs:466`) without touching `entry.parent.children`. This creates a stale parent->child edge, violating table consistency. Reachable whenever an orphaned inode is removed after any remaining parent reference persists."
+      ],
+      "fix_outline": "Make `remove_orphan` delegate to `remove`, or also prune `entry.parent.children` before deletion.",
+      "source_file": "src/virtual_fs/inode.rs"
+    },
+    {
+      "title": "Prefix cancel drops sibling delete paths",
+      "finding_type": "data integrity bug",
+      "severity": "medium",
+      "locations": [
+        "src/virtual_fs/flush.rs:102"
+      ],
+      "preconditions": [
+        "queued deletes include sibling paths sharing a string prefix"
+      ],
+      "proof": [
+        "`cancel_delete_prefix` accepts a caller-controlled path prefix and filters `pending_deletes` with `!p.starts_with(prefix)` in `src/virtual_fs/flush.rs:102`. A prefix like `dir` also matches sibling paths such as `dir2/file`. Those unrelated delete entries are removed before `flush_pending_deletes` batches them, so reachable queued remote deletions for sibling paths are silently skipped."
+      ],
+      "fix_outline": "match whole path components, not raw string prefixes",
+      "source_file": "src/virtual_fs/flush.rs"
+    },
+    {
+      "title": "PID file deletion follows untrusted environment path",
+      "finding_type": "trust-boundary violation",
+      "severity": "medium",
+      "locations": [
+        "src/daemon.rs:126"
+      ],
+      "preconditions": [
+        "Attacker controls daemon process environment variables"
+      ],
+      "proof": [
+        "`DaemonGuard::from_env()` reads `HF_MOUNT_DAEMON_PID_FILE` directly into `pid_file` from the environment. `Drop` later always calls `std::fs::remove_file(&self.pid_file)` when the guard is destroyed. No validation ties this path to `pid_path()` or the state directory. Thus any daemon subprocess reaching `from_env()` and then dropping the guard deletes an attacker-selected file path reachable by that process."
+      ],
+      "fix_outline": "Ignore env path; recompute PID path internally or validate it stays under state_dir().",
+      "source_file": "src/daemon.rs"
+    },
+    {
+      "title": "Daemon writes PID and log files through attacker-controlled HOME",
+      "finding_type": "trust-boundary violation",
+      "severity": "medium",
+      "locations": [
+        "src/daemon.rs:6"
+      ],
+      "preconditions": [
+        "Attacker can set `HOME` before invoking the daemon"
+      ],
+      "proof": [
+        "`state_dir()` builds `~/.hf-mount` directly from `std::env::var_os(\"HOME\")`, else `/tmp`. `pid_path()` and `log_path()` append attacker-influenced filenames there, and `daemonize()` calls `create_dir_all`, opens the log with `.create(true).append(true)`, and writes the PID file. No validation or trusted directory lookup constrains `HOME`, so starting the daemon writes files under any user-chosen path reachable by the process."
+      ],
+      "fix_outline": "Use a trusted home/state directory source; reject or ignore untrusted `HOME` for daemon files.",
+      "source_file": "src/daemon.rs"
+    },
+    {
+      "title": "Read-only mode still accepts mutating NFS RPCs",
+      "finding_type": "authorization flaw",
+      "severity": "high",
+      "locations": [
+        "src/nfs.rs:118"
+      ],
+      "preconditions": [
+        "NFS server mounted with `read_only=true`"
+      ],
+      "proof": [
+        "`mount_nfs` passes `read_only` into `NFSAdapter::new`; `capabilities()` then only returns `VFSCapabilities::ReadOnly`. But mutating handlers `setattr`, `write`, `create`, `create_exclusive`, `mkdir`, `remove`, `rename`, and `symlink` never check `self.read_only` and directly call `virtual_fs` mutation methods. Thus any client that sends those RPCs reaches backend state changes despite read-only mode, enabling unauthorized filesystem modification."
+      ],
+      "fix_outline": "Reject every mutating RPC with `NFS3ERR_ROFS` when `self.read_only` is true.",
+      "source_file": "src/nfs.rs"
+    },
+    {
+      "title": "Client-supplied uid/gid are applied without adapter-side checks",
+      "finding_type": "trust-boundary violation",
+      "severity": "medium",
+      "locations": [
+        "src/nfs.rs:213"
+      ],
+      "preconditions": [
+        "Client can issue NFS `SETATTR` with uid/gid fields"
+      ],
+      "proof": [
+        "NFS request data enters `NFSAdapter::setattr` as `sattr3`. At `src/nfs.rs:213`, `setattr.uid` and `setattr.gid` are decoded directly into `Some(u)`/`Some(g)` and passed unchanged to `self.virtual_fs.setattr(id, size, mode, uid, gid, atime, mtime)`. No adapter-side permission, identity, or value checks occur before crossing into `virtual_fs`. Thus any reachable `SETATTR` call can request ownership changes using client-supplied uid/gid values."
+      ],
+      "fix_outline": "Reject client uid/gid changes here, or enforce caller authorization before forwarding.",
+      "source_file": "src/nfs.rs"
+    },
+    {
+      "title": "NFS create honors untrusted uid/gid fields",
+      "finding_type": "trust-boundary violation",
+      "severity": "medium",
+      "locations": [
+        "src/nfs.rs:261"
+      ],
+      "preconditions": [
+        "Writable NFS client can send CREATE with uid/gid attributes"
+      ],
+      "proof": [
+        "`create` reads `attr.uid`/`attr.gid` from client-supplied `sattr3` and, when present, assigns them directly to `uid`/`gid` in `src/nfs.rs:261`. It then calls `create_file`, which forwards them unchanged to `virtual_fs.create(dirid, name, mode, uid, gid, None)`. No validation or remapping appears on this path. A reachable CREATE request can therefore choose persisted file ownership metadata instead of server defaults."
+      ],
+      "fix_outline": "Ignore client uid/gid on create; always use server-derived defaults or authenticated identity mapping.",
+      "source_file": "src/nfs.rs"
+    },
+    {
+      "title": "Staging directory creation panics on filesystem errors",
+      "finding_type": "error-handling bug",
+      "severity": "medium",
+      "locations": [
+        "src/xet.rs:173"
+      ],
+      "preconditions": [
+        "Attacker influences `cache_dir` to an uncreatable path"
+      ],
+      "proof": [
+        "`StagingDir::new` takes caller-provided `cache_dir`, joins `staging`, then calls `std::fs::create_dir_all(&dir).unwrap_or_else(...)` in `src/xet.rs:173`. Any filesystem error creating that path triggers the panic path instead of returning `Result`. This is directly reachable whenever staging is initialized with an invalid or inaccessible cache directory, causing process abort/denial of service rather than recoverable error handling."
+      ],
+      "fix_outline": "Make `StagingDir::new` return `Result<Self>` and propagate `create_dir_all` failures as `Error`.",
+      "source_file": "src/xet.rs"
+    },
+    {
+      "title": "Bounded download range lacks local ordering validation",
+      "finding_type": "validation gap",
+      "severity": "medium",
+      "locations": [
+        "src/xet.rs:88"
+      ],
+      "preconditions": [
+        "Caller can pass `end: Some(u64)` to bounded download"
+      ],
+      "proof": [
+        "`download_stream` accepts caller-provided `offset` and `end` and, in the `Some(end)` branch, directly builds `FileRange::new(offset, end)` at `src/xet.rs:88` with no `end >= offset` check. The documented contract expects `[offset, end)`, so `end < offset` violates local range ordering before handing control to `FileReconstructor`. This reachable malformed range can trigger incorrect bounded-download behavior or downstream errors."
+      ],
+      "fix_outline": "Reject `Some(end)` when `end < offset` before constructing `FileRange`.",
+      "source_file": "src/xet.rs"
+    }
+  ],
+  "verified_findings": [
+    {
+      "finding": {
+        "title": "Untrusted args file controls mount configuration",
+        "finding_type": "trust-boundary violation",
+        "severity": "medium",
+        "locations": [
+          "src/bin/hf-mount-fuse-sidecar.rs:156"
+        ],
+        "preconditions": [
+          "attacker can write shared `tmp_dir` volume args file"
+        ],
+        "proof": [
+          "Input originates from `tmp_dir/.volumes/*/args`, described as a shared emptyDir. `discover_pending()` reads each file with `read_to_string`, splits lines into tokens, and passes them directly to `MountArgs::try_parse_from`, then `run_mount()` uses the parsed `source` and `options` in `build()`. No check binds files to the CSI driver or validates ownership/source. Any writer to the shared directory can influence mount configuration for a launched mount."
+        ],
+        "fix_outline": "Verify args file provenance before parsing, e.g. trusted ownership/path checks or authenticated driver-signed configs.",
+        "source_file": "src/bin/hf-mount-fuse-sidecar.rs"
+      },
+      "correctness_reason": "verified by proof-of-concept reproduction",
+      "rebuttal_reason": "not used; PoC verifier is authoritative",
+      "reproducer": {
+        "reproduced": true,
+        "summary": "he real CSI-provided FUSE fd for that volume.\n- One nuance: this is slightly narrower than \u201ccontrols kernel mount configuration.\u201d In sidecar mode `mount_fuse(..., Some(fuse_fd))` uses `fuser::Session::from_fd(...)` at `src/fuse.rs:598`, so the kernel mountpoint is likely already established by the CSI driver. But the bug is still real: the attacker controls what backing repo/bucket the daemon serves and which local paths/files it reads or creates.\n\nI also checked parser behavior with a small Clap PoC: `try_parse_from` expects an argv[0]-style first token, so a valid args file needs that leading dummy token. That does not negate the issue; an attacker modifying an existing legitimate args file can simply preserve that first line and alter the rest.\n\nThe repo does not itself prove who can write the shared `emptyDir`, but given the finding\u2019s stated precondition (\u201cattacker can write shared `tmp_dir` volume args file\u201d), the source code shows a practical trust-boundary violation.\n\nREPRODUCED"
+      }
+    },
+    {
+      "finding": {
+        "title": "Sidecar accepts SCM_RIGHTS fd from any socket peer",
+        "finding_type": "trust-boundary violation",
+        "severity": "medium",
+        "locations": [
+          "src/bin/hf-mount-fuse-sidecar.rs:186"
+        ],
+        "preconditions": [
+          "Attacker can create or impersonate the configured Unix socket path"
+        ],
+        "proof": [
+          "Input origin: `connect_and_receive_fd` connects to `socket_path` from discovered volume state. Propagation: after `UnixStream::connect`, it calls `recvmsg`, accepts the first `SCM_RIGHTS` fd, wraps it with `OwnedFd::from_raw_fd`, and passes it to `mount_fuse`. Failing condition: no peer credential or identity check occurs on the connected Unix socket. Impact: sidecar trusts an fd from any socket peer. Reachability: direct on every mount setup."
+        ],
+        "fix_outline": "Verify peer credentials after connect and reject peers not matching the expected CSI driver identity.",
+        "source_file": "src/bin/hf-mount-fuse-sidecar.rs"
+      },
+      "correctness_reason": "verified by proof-of-concept reproduction",
+      "rebuttal_reason": "not used; PoC verifier is authoritative",
+      "reproducer": {
+        "reproduced": true,
+        "summary": " as the FUSE device and enters the handshake path (`/Users/j/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fuser-0.17.0/src/session.rs:195`).\n- A malicious peer controlling the socket can therefore send a non-FUSE fd such as the read end of a pipe with no writer. `Session::from_fd` then blocks waiting for the initial FUSE request, `run_mount` never reaches either the error-file or ready-file write in `src/bin/hf-mount-fuse-sidecar.rs:340`, and the main thread waits forever in the `while !ready_path.exists() && !error_path.exists()` loop at `src/bin/hf-mount-fuse-sidecar.rs:116`.\n- I do not see source evidence for a stronger confused-deputy / privilege-escalation impact from \u201cany peer can send any fd\u201d: an arbitrary fd does not become a usable FUSE mount, and providing a real mounted `/dev/fuse` fd would already require the attacker to possess the privileged CSI-driver capability. The practical issue shown by the code is denial of service under the stated precondition.\n\nREPRODUCED"
+      }
+    },
+    {
+      "finding": {
+        "title": "PID file deletion follows untrusted environment path",
+        "finding_type": "trust-boundary violation",
+        "severity": "medium",
+        "locations": [
+          "src/daemon.rs:126"
+        ],
+        "preconditions": [
+          "Attacker controls daemon process environment variables"
+        ],
+        "proof": [
+          "`DaemonGuard::from_env()` reads `HF_MOUNT_DAEMON_PID_FILE` directly into `pid_file` from the environment. `Drop` later always calls `std::fs::remove_file(&self.pid_file)` when the guard is destroyed. No validation ties this path to `pid_path()` or the state directory. Thus any daemon subprocess reaching `from_env()` and then dropping the guard deletes an attacker-selected file path reachable by that process."
+        ],
+        "fix_outline": "Ignore env path; recompute PID path internally or validate it stays under state_dir().",
+        "source_file": "src/daemon.rs"
+      },
+      "correctness_reason": "verified by proof-of-concept reproduction",
+      "rebuttal_reason": "not used; PoC verifier is authoritative",
+      "reproducer": {
+        "reproduced": true,
+        "summary": "_MOUNT_DAEMON_FD` and `HF_MOUNT_DAEMON_PID_FILE` to arbitrary values and thereby instantiate a `DaemonGuard` with an attacker-chosen path.\n- Once such a backend reaches a normal scope exit after a successful mount, Rust drops `daemon_guard`, and `Drop` removes the attacker-selected path with the backend's privileges. `notify_ready()` in `src/fuse.rs:622` / `src/nfs.rs:495` only suppresses the pipe error byte; it does not change the later `remove_file`. That gives a local arbitrary-file deletion primitive for any file writable/removable by that process.\n- Important limitation: the claim that \u201cany daemon subprocess reaching `from_env()` and then dropping the guard deletes\u2026\u201d is not true for early mount failures, because both backends call `std::process::exit(1)` on mount error in `src/bin/hf-mount-fuse.rs:12` and `src/bin/hf-mount-nfs.rs:16`, which bypasses `Drop`. The bug requires a successful mount followed by later normal termination (or another path that unwinds normally).\n\nREPRODUCED"
+      }
+    },
+    {
+      "finding": {
+        "title": "NFS create honors untrusted uid/gid fields",
+        "finding_type": "trust-boundary violation",
+        "severity": "medium",
+        "locations": [
+          "src/nfs.rs:261"
+        ],
+        "preconditions": [
+          "Writable NFS client can send CREATE with uid/gid attributes"
+        ],
+        "proof": [
+          "`create` reads `attr.uid`/`attr.gid` from client-supplied `sattr3` and, when present, assigns them directly to `uid`/`gid` in `src/nfs.rs:261`. It then calls `create_file`, which forwards them unchanged to `virtual_fs.create(dirid, name, mode, uid, gid, None)`. No validation or remapping appears on this path. A reachable CREATE request can therefore choose persisted file ownership metadata instead of server defaults."
+        ],
+        "fix_outline": "Ignore client uid/gid on create; always use server-derived defaults or authenticated identity mapping.",
+        "source_file": "src/nfs.rs"
+      },
+      "correctness_reason": "verified by proof-of-concept reproduction",
+      "rebuttal_reason": "not used; PoC verifier is authoritative",
+      "reproducer": {
+        "reproduced": true,
+        "summary": "s narrower than the report implies:\n\n- I do not see these ownership fields being written to the Hub/Xet backend; flush logic only batches content/path operations, not uid/gid metadata: `src/virtual_fs/flush.rs:201`, `src/virtual_fs/flush.rs:228`.\n- On reload/remount, remote entries are recreated with server defaults `self.uid` / `self.gid`, so this is not durable backend ownership corruption: `src/virtual_fs/mod.rs:443`, `src/virtual_fs/mod.rs:470`, `src/setup.rs:329`.\n- I also do not see access-control decisions based on inode owner/group; mutation checks are basically `read_only`, so this is metadata spoofing/confusion rather than an authorization bypass: `src/virtual_fs/mod.rs:1798`, `src/virtual_fs/mod.rs:1923`, `src/virtual_fs/mod.rs:2065`, `src/virtual_fs/mod.rs:2552`.\n\nSo the directly provable bug is: a local NFS client that can send crafted `CREATE` RPCs can choose the file's reported owner/group for the lifetime of the mount session, instead of the server defaults.\n\nREPRODUCED"
+      }
+    },
+    {
+      "finding": {
+        "title": "Staging directory creation panics on filesystem errors",
+        "finding_type": "error-handling bug",
+        "severity": "medium",
+        "locations": [
+          "src/xet.rs:173"
+        ],
+        "preconditions": [
+          "Attacker influences `cache_dir` to an uncreatable path"
+        ],
+        "proof": [
+          "`StagingDir::new` takes caller-provided `cache_dir`, joins `staging`, then calls `std::fs::create_dir_all(&dir).unwrap_or_else(...)` in `src/xet.rs:173`. Any filesystem error creating that path triggers the panic path instead of returning `Result`. This is directly reachable whenever staging is initialized with an invalid or inaccessible cache directory, causing process abort/denial of service rather than recoverable error handling."
+        ],
+        "fix_outline": "Make `StagingDir::new` return `Result<Self>` and propagate `create_dir_all` failures as `Error`.",
+        "source_file": "src/xet.rs"
+      },
+      "correctness_reason": "verified by proof-of-concept reproduction",
+      "rebuttal_reason": "not used; PoC verifier is authoritative",
+      "reproducer": {
+        "reproduced": true,
+        "summary": "se.rs:7`, `src/bin/hf-mount-nfs.rs:6`). Only the sidecar path catches setup panics (`src/bin/hf-mount-fuse-sidecar.rs:321`).\n- A practical trigger exists even if `cache_dir` itself is creatable: make `cache_dir` a writable directory, but place a regular file at `cache_dir/staging`. Then `create_dir_all(cache_dir)` in `src/setup.rs:292` succeeds, but `create_dir_all(cache_dir/staging)` in `src/xet.rs:190` fails with `File exists`, hitting the panic path. I confirmed the underlying OS behavior with a local PoC: `os.makedirs(.../staging, exist_ok=True)` raises `FileExistsError` when `staging` is a file.\n- So the exact precondition in the report (\"`cache_dir` to an uncreatable path\") is not quite right, because `build()` already panics earlier if `cache_dir` itself cannot be created. But there is still a directly source-grounded bug: an attacker or local user who can influence the cache layout can cause startup-time denial of service by blocking creation of `cache_dir/staging`.\n\nREPRODUCED"
+      }
+    },
+    {
+      "finding": {
+        "title": "Client-supplied uid/gid are applied without adapter-side checks",
+        "finding_type": "trust-boundary violation",
+        "severity": "medium",
+        "locations": [
+          "src/nfs.rs:213"
+        ],
+        "preconditions": [
+          "Client can issue NFS `SETATTR` with uid/gid fields"
+        ],
+        "proof": [
+          "NFS request data enters `NFSAdapter::setattr` as `sattr3`. At `src/nfs.rs:213`, `setattr.uid` and `setattr.gid` are decoded directly into `Some(u)`/`Some(g)` and passed unchanged to `self.virtual_fs.setattr(id, size, mode, uid, gid, atime, mtime)`. No adapter-side permission, identity, or value checks occur before crossing into `virtual_fs`. Thus any reachable `SETATTR` call can request ownership changes using client-supplied uid/gid values."
+        ],
+        "fix_outline": "Reject client uid/gid changes here, or enforce caller authorization before forwarding.",
+        "source_file": "src/nfs.rs"
+      },
+      "correctness_reason": "verified by proof-of-concept reproduction",
+      "rebuttal_reason": "not used; PoC verifier is authoritative",
+      "reproducer": {
+        "reproduced": true,
+        "summary": " able to use that mount can issue a normal ownership-changing operation such as `chown`/`chgrp`, which becomes NFS `SETATTR`. Because the server side does not validate the requested owner/group, the metadata change succeeds whenever the mount is writable.\n- Impact is direct: a client can arbitrarily rewrite file or directory ownership metadata inside the mount, causing future `getattr`/`readdir` results to report attacker-chosen `uid`/`gid` and undermining any consumer that trusts those ownership fields. Since this codebase does not implement permission enforcement in `VirtualFs`, there is no lower layer restoring POSIX ownership semantics.\n\nWhy I did not reject it:\n\n- Binding to `127.0.0.1` in `src/nfs.rs:425` limits exposure to local access, so the strongest supported claim is not \u201cany network client can do this.\u201d\n- But the core finding still stands for mounted-path users: the NFS adapter trusts client-provided ownership changes, and the backing VFS accepts them verbatim.\n\nREPRODUCED"
+      }
+    }
+  ],
+  "repo_profile": {
+    "languages": [
+      "Rust",
+      "Dockerfile"
+    ],
+    "frameworks": [
+      "Tokio",
+      "Clap",
+      "FUSE",
+      "NFS"
+    ],
+    "entry_points": [
+      "src/bin/hf-mount.rs",
+      "src/bin/hf-mount-fuse.rs",
+      "src/bin/hf-mount-nfs.rs",
+      "src/bin/hf-mount-fuse-sidecar.rs",
+      "Dockerfile"
+    ],
+    "trust_boundaries": [
+      "CLI arguments and environment variables",
+      "Local FUSE mount interface",
+      "NFS server interface",
+      "Remote Hugging Face buckets and repos",
+      "Remote CAS/presigned URL responses"
+    ],
+    "persistence_layers": [
+      "Local mounted filesystem view",
+      "Remote Hugging Face storage",
+      "CAS-retrieved file chunks and metadata cache"
+    ],
+    "auth_surfaces": [
+      "Environment-based CLI configuration",
+      "Remote Hugging Face/xet client requests",
+      "Presigned URL access"
+    ],
+    "dangerous_operations": [
+      "Mounting filesystems via FUSE",
+      "Serving files over NFS",
+      "Fetching remote content over HTTP",
+      "Using presigned URLs for object retrieval",
+      "Caching remote reconstruction plans"
+    ],
+    "summary": "Rust command-line project that mounts Hugging Face buckets and repositories as a local filesystem using FUSE or NFS. It provides multiple binaries for generic, FUSE, NFS, and FUSE sidecar modes, built with Tokio and Clap. Repository evidence shows remote interaction with Hugging Face/xet CAS services, HTTP fetching via reqwest, and a local cache for reconstruction plans tied to presigned URLs."
+  },
+  "import_index": {
+    ".github/workflows/bump-release.yml": [],
+    ".github/workflows/ci.yml": [],
+    ".github/workflows/release.yml": [],
+    ".vscode/settings.json": [],
+    "Cargo.toml": [],
+    "install.sh": [],
+    "rustfmt.toml": [],
+    "src/bin/hf-mount-fuse-sidecar.rs": [
+      "std::io",
+      "std::os::fd::",
+      "std::os::unix::io::AsRawFd",
+      "std::os::unix::net::UnixStream",
+      "std::path::",
+      "std::sync::Arc",
+      "std::sync::atomic::",
+      "std::time::",
+      "clap::Parser",
+      "tracing::",
+      "hf_mount::fuse::mount_fuse",
+      "hf_mount::setup::"
+    ],
+    "src/bin/hf-mount-fuse.rs": [
+      "tracing::info",
+      "hf_mount::fuse::mount_fuse",
+      "hf_mount::setup::setup"
+    ],
+    "src/bin/hf-mount-nfs.rs": [
+      "tracing::",
+      "hf_mount::setup::setup"
+    ],
+    "src/bin/hf-mount.rs": [
+      "std::path::PathBuf",
+      "clap::Parser",
+      "std::os::unix::process::CommandExt"
+    ],
+    "src/cached_xet_client.rs": [
+      "std::collections::HashMap",
+      "std::sync::",
+      "std::time::",
+      "bytes::Bytes",
+      "xet_client::ClientError",
+      "xet_client::cas_client::adaptive_concurrency::ConnectionPermit",
+      "xet_client::cas_client::",
+      "xet_client::cas_types::",
+      "xet_core_structures::merklehash::MerkleHash",
+      "xet_core_structures::metadata_shard::file_structs::MDBFileInfo",
+      "xet_core_structures::xorb_object::SerializedXorbObject",
+      "super::",
+      "std::collections::HashMap",
+      "std::sync::atomic::",
+      "tokio::task::JoinSet",
+      "xet_client::ClientError",
+      "xet_client::cas_types::FileRange",
+      "xet_core_structures::merklehash::compute_data_hash"
+    ],
+    "src/daemon.rs": [
+      "std::os::unix::io::AsRawFd",
+      "std::path::"
+    ],
+    "src/error.rs": [
+      "std::fmt"
+    ],
+    "src/fuse.rs": [
+      "std::ffi::OsStr",
+      "std::io",
+      "std::os::fd::OwnedFd",
+      "std::path::",
+      "std::process::Command",
+      "std::sync::Arc",
+      "std::sync::atomic::",
+      "std::time::",
+      "fuser::",
+      "tracing::",
+      "crate::daemon::DaemonGuard",
+      "crate::setup::MountSetup",
+      "crate::virtual_fs::inode::InodeKind",
+      "crate::virtual_fs::",
+      "tokio::signal::unix::",
+      "std::ffi::CString"
+    ],
+    "src/hub_api.rs": [
+      "std::path::",
+      "std::sync::Arc",
+      "std::time::",
+      "reqwest::Client",
+      "serde::",
+      "tokio::io::AsyncWriteExt",
+      "tracing::",
+      "xet_client::cas_client::auth::",
+      "crate::error::",
+      "futures::StreamExt",
+      "super::",
+      "crate::error::is_retryable_status",
+      "tokio::io::"
+    ],
+    "src/lib.rs": [],
+    "src/nfs.rs": [
+      "std::collections::",
+      "std::path::Path",
+      "std::sync::",
+      "std::time::",
+      "async_trait::async_trait",
+      "nfsserve::nfs::",
+      "nfsserve::tcp::",
+      "nfsserve::vfs::",
+      "tracing::info",
+      "crate::daemon::DaemonGuard",
+      "crate::virtual_fs::inode::InodeKind",
+      "crate::virtual_fs::",
+      "std::ffi::CString",
+      "std::ffi::CString",
+      "std::mem::MaybeUninit",
+      "super::"
+    ],
+    "src/setup.rs": [
+      "std::io::IsTerminal",
+      "std::path::",
+      "std::sync::Arc",
+      "clap::Parser",
+      "tracing::info",
+      "xet_data::processing::configurations::TranslatorConfig",
+      "xet_data::processing::data_client::default_config",
+      "xet_data::processing::",
+      "crate::cached_xet_client::CachedXetClient",
+      "crate::hub_api::",
+      "crate::virtual_fs::",
+      "crate::xet::"
+    ],
+    "src/test_mocks.rs": [
+      "std::collections::HashMap",
+      "std::path::Path",
+      "std::sync::atomic::",
+      "std::sync::",
+      "std::time::",
+      "bytes::Bytes",
+      "xet_data::processing::XetFileInfo",
+      "crate::error::",
+      "crate::hub_api::",
+      "crate::xet::"
+    ],
+    "src/virtual_fs/flush.rs": [
+      "std::collections::",
+      "std::path::PathBuf",
+      "std::sync::",
+      "std::time::",
+      "tokio::sync::mpsc",
+      "tracing::",
+      "crate::hub_api::",
+      "crate::xet::",
+      "super::inode::InodeTable"
+    ],
+    "src/virtual_fs/inode.rs": [
+      "std::collections::HashMap",
+      "std::sync::atomic::",
+      "std::time::",
+      "super::"
+    ],
+    "src/virtual_fs/mod.rs": [
+      "std::collections::",
+      "std::fs::",
+      "std::os::unix::io::AsRawFd",
+      "std::path::PathBuf",
+      "std::sync::atomic::",
+      "std::sync::",
+      "std::time::",
+      "bytes::",
+      "tracing::",
+      "xet_data::processing::XetFileInfo",
+      "crate::hub_api::",
+      "crate::xet::",
+      "inode::",
+      "prefetch::",
+      "std::hash::"
+    ],
+    "src/virtual_fs/poll.rs": [
+      "std::collections::",
+      "std::sync::",
+      "std::time::",
+      "tracing::",
+      "crate::hub_api::HubOps",
+      "super::Invalidator",
+      "super::inode::"
+    ],
+    "src/virtual_fs/prefetch.rs": [
+      "std::collections::VecDeque",
+      "bytes::",
+      "tracing::debug",
+      "crate::xet::DownloadStreamOps",
+      "super::"
+    ],
+    "src/virtual_fs/tests.rs": [
+      "std::time::Duration",
+      "super::inode::ROOT_INODE",
+      "super::",
+      "crate::hub_api::HeadFileInfo",
+      "crate::test_mocks::",
+      "std::sync::atomic::Ordering",
+      "std::sync::atomic::Ordering"
+    ],
+    "src/xet.rs": [
+      "std::path::",
+      "std::sync::Arc",
+      "bytes::Bytes",
+      "ulid::Ulid",
+      "xet_client::cas_client::Client",
+      "xet_client::cas_types::FileRange",
+      "xet_core_structures::merklehash::MerkleHash",
+      "xet_data::file_reconstruction::",
+      "xet_data::processing::configurations::TranslatorConfig",
+      "xet_data::processing::file_cleaner::Sha256Policy",
+      "xet_data::processing::",
+      "crate::error::",
+      "std::hash::"
+    ],
+    "tests/bench.rs": [],
+    "tests/common/bench.rs": [
+      "std::io::",
+      "std::time::",
+      "hf_mount::xet::XetOps"
+    ],
+    "tests/common/fs_tests.rs": [
+      "std::io::",
+      "std::sync::Arc",
+      "std::io::",
+      "std::os::unix::io::AsRawFd",
+      "std::io::",
+      "std::io::Write",
+      "std::os::unix::io::AsRawFd"
+    ],
+    "tests/common/mod.rs": [
+      "std::path::Path",
+      "std::process::",
+      "std::sync::Arc",
+      "std::time::",
+      "reqwest::Client",
+      "xet_core_structures::metadata_shard::file_structs::Sha256",
+      "xet_data::processing::configurations::TranslatorConfig",
+      "xet_data::processing::data_client::default_config",
+      "xet_data::processing::"
+    ],
+    "tests/fio_bench.rs": [
+      "std::process::Command",
+      "std::time::"
+    ],
+    "tests/fsx.rs": [
+      "std::process::Command"
+    ],
+    "tests/fuse_ops.rs": [],
+    "tests/nfs_ops.rs": [],
+    "tests/pjdfstest.rs": [
+      "std::process::Command"
+    ],
+    "tests/repo_ops.rs": [
+      "std::io::Read"
+    ],
+    "tests/warm_cache_bench.rs": [
+      "std::io::Read",
+      "std::time::Instant"
+    ],
+    "tests/xfstests.rs": [
+      "std::process::Command",
+      "std::io::Write"
+    ]
+  },
+  "caller_index": {
+    ".github/workflows/ci.yml": [
+      "src/setup.rs"
+    ],
+    ".github/workflows/release.yml": [
+      "src/setup.rs"
+    ],
+    "src/bin/hf-mount-fuse-sidecar.rs": [
+      "src/fuse.rs",
+      "src/setup.rs"
+    ],
+    "src/bin/hf-mount-fuse.rs": [
+      "src/fuse.rs",
+      "src/setup.rs"
+    ],
+    "src/bin/hf-mount-nfs.rs": [
+      "src/setup.rs"
+    ],
+    "src/bin/hf-mount.rs": [
+      "src/daemon.rs"
+    ],
+    "src/daemon.rs": [
+      "tests/common/mod.rs"
+    ],
+    "src/fuse.rs": [
+      "src/setup.rs",
+      "tests/common/mod.rs"
+    ],
+    "src/hub_api.rs": [
+      "src/error.rs",
+      "src/setup.rs",
+      "tests/common/mod.rs"
+    ],
+    "src/lib.rs": [
+      "src/setup.rs"
+    ],
+    "src/nfs.rs": [
+      "tests/common/mod.rs"
+    ],
+    "src/setup.rs": [
+      "src/hub_api.rs",
+      "tests/common/mod.rs"
+    ],
+    "src/test_mocks.rs": [
+      "src/setup.rs"
+    ],
+    "src/virtual_fs/inode.rs": [
+      "src/setup.rs"
+    ],
+    "src/virtual_fs/mod.rs": [
+      "src/hub_api.rs",
+      "src/setup.rs",
+      "src/virtual_fs/inode.rs"
+    ],
+    "src/virtual_fs/poll.rs": [
+      "src/hub_api.rs"
+    ],
+    "src/virtual_fs/tests.rs": [
+      "src/setup.rs",
+      "src/test_mocks.rs"
+    ],
+    "tests/bench.rs": [
+      "src/setup.rs",
+      "tests/common/bench.rs",
+      "tests/common/mod.rs"
+    ],
+    "tests/common/bench.rs": [
+      "tests/common/mod.rs"
+    ],
+    "tests/common/fs_tests.rs": [
+      "tests/common/mod.rs"
+    ],
+    "tests/common/mod.rs": [
+      "src/setup.rs"
+    ],
+    "tests/fio_bench.rs": [
+      "src/setup.rs",
+      "tests/common/mod.rs"
+    ],
+    "tests/fsx.rs": [
+      "src/setup.rs",
+      "tests/common/mod.rs"
+    ],
+    "tests/fuse_ops.rs": [
+      "tests/common/fs_tests.rs",
+      "tests/common/mod.rs"
+    ],
+    "tests/nfs_ops.rs": [
+      "tests/common/fs_tests.rs",
+      "tests/common/mod.rs"
+    ],
+    "tests/pjdfstest.rs": [
+      "src/setup.rs",
+      "tests/common/mod.rs"
+    ],
+    "tests/repo_ops.rs": [
+      "tests/common/mod.rs"
+    ],
+    "tests/warm_cache_bench.rs": [
+      "tests/common/mod.rs"
+    ],
+    "tests/xfstests.rs": [
+      "src/setup.rs",
+      "tests/common/mod.rs"
+    ]
+  },
+  "verification_state": {
+    "089ca3ba27a6": {
+      "status": "discarded",
+      "attempts": 1,
+      "last_error": null,
+      "summary": "not reproduced"
+    },
+    "1cd001f9cb21": {
+      "status": "discarded",
+      "attempts": 1,
+      "last_error": null,
+      "summary": "not reproduced"
+    },
+    "ef702188e6ce": {
+      "status": "discarded",
+      "attempts": 1,
+      "last_error": null,
+      "summary": "not reproduced"
+    },
+    "3ff5725140f7": {
+      "status": "verified",
+      "attempts": 1,
+      "last_error": null,
+      "summary": "verified by proof-of-concept reproduction"
+    },
+    "0d634e4af876": {
+      "status": "verified",
+      "attempts": 1,
+      "last_error": null,
+      "summary": "verified by proof-of-concept reproduction"
+    },
+    "9d4a9dd1e37c": {
+      "status": "discarded",
+      "attempts": 1,
+      "last_error": null,
+      "summary": "not reproduced"
+    },
+    "d1b34ee6d28a": {
+      "status": "discarded",
+      "attempts": 1,
+      "last_error": null,
+      "summary": "not reproduced"
+    },
+    "cdedeea4f718": {
+      "status": "discarded",
+      "attempts": 1,
+      "last_error": null,
+      "summary": "not reproduced"
+    },
+    "65b027a0621b": {
+      "status": "discarded",
+      "attempts": 1,
+      "last_error": null,
+      "summary": "not reproduced"
+    },
+    "9e195f528e4f": {
+      "status": "discarded",
+      "attempts": 1,
+      "last_error": null,
+      "summary": "not reproduced"
+    },
+    "a607c121e6ff": {
+      "status": "verified",
+      "attempts": 1,
+      "last_error": null,
+      "summary": "verified by proof-of-concept reproduction"
+    },
+    "8d485564d002": {
+      "status": "discarded",
+      "attempts": 1,
+      "last_error": null,
+      "summary": "not reproduced"
+    },
+    "1632b18ac20a": {
+      "status": "discarded",
+      "attempts": 1,
+      "last_error": null,
+      "summary": "not reproduced"
+    },
+    "de43ed553d39": {
+      "status": "verified",
+      "attempts": 3,
+      "last_error": "LLM call failed (model: gpt-5.4): litellm.APIError: APIError: ChatgptException - An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists. Please include the request ID b3f21d45-de04-44ac-891c-5b449e4973c1 in your message.",
+      "summary": "verified by proof-of-concept reproduction"
+    },
+    "45f620cc25dd": {
+      "status": "verified",
+      "attempts": 1,
+      "last_error": null,
+      "summary": "verified by proof-of-concept reproduction"
+    },
+    "8b8b8bb374ab": {
+      "status": "verified",
+      "attempts": 1,
+      "last_error": null,
+      "summary": "verified by proof-of-concept reproduction"
+    },
+    "621cf9049618": {
+      "status": "discarded",
+      "attempts": 1,
+      "last_error": null,
+      "summary": "not reproduced"
+    }
+  },
+  "next_index": 7,
+  "phase": "done",
+  "metrics": {
+    "parse_failures": 0,
+    "repair_successes": 0,
+    "repair_failures": 0,
+    "analytical_retries": 0
+  }
+}

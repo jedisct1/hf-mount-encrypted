@@ -1,7 +1,11 @@
 pub mod cached_xet_client;
+#[cfg(feature = "encrypt")]
+pub mod crypto;
 pub mod daemon;
 pub mod error;
 pub mod file_cache;
+#[cfg(feature = "encrypt")]
+pub mod filename_crypto;
 #[cfg(feature = "fuse")]
 pub mod fuse;
 pub mod hub_api;

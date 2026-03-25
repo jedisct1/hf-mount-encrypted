@@ -145,6 +145,12 @@ pub struct InodeEntry {
     pub last_revalidated: Option<Instant>,
     /// Eviction bookkeeping (kernel refcount, LRU recency, pending flag, pinning).
     pub eviction: EvictionState,
+    #[cfg(feature = "encrypt")]
+    pub encrypted: bool,
+    #[cfg(feature = "encrypt")]
+    pub file_algorithm: Option<crate::crypto::Algorithm>,
+    #[cfg(feature = "encrypt")]
+    pub remote_size: Option<u64>,
 }
 
 impl InodeEntry {
@@ -204,6 +210,47 @@ impl InodeEntry {
             true
         } else {
             false
+        }
+    }
+
+    pub fn download_size(&self) -> u64 {
+        #[cfg(feature = "encrypt")]
+        if self.encrypted {
+            return self.remote_size.unwrap_or(self.size);
+        }
+        self.size
+    }
+
+    #[cfg(feature = "encrypt")]
+    pub fn content_type_string(&self, chunk_size: u32) -> Option<String> {
+        if self.encrypted {
+            let algorithm = self.file_algorithm?;
+            let remote_size = self.remote_size?;
+            Some(crate::crypto::format_content_type(&crate::crypto::EncryptedFileInfo {
+                algorithm,
+                plaintext_size: self.size,
+                ciphertext_size: remote_size,
+                chunk_size,
+            }))
+        } else {
+            None
+        }
+    }
+
+    #[cfg(feature = "encrypt")]
+    pub fn apply_encryption_metadata(&mut self, info: &crate::crypto::EncryptedFileInfo, remote_size: u64) {
+        self.encrypted = true;
+        self.file_algorithm = Some(info.algorithm);
+        self.size = info.plaintext_size;
+        self.remote_size = Some(remote_size);
+    }
+
+    #[cfg(feature = "encrypt")]
+    pub fn mark_encrypted(&mut self, ciphertext_size: u64, default_algorithm: crate::crypto::Algorithm) {
+        self.encrypted = true;
+        self.remote_size = Some(ciphertext_size);
+        if self.file_algorithm.is_none() {
+            self.file_algorithm = Some(default_algorithm);
         }
     }
 
@@ -293,6 +340,12 @@ impl InodeTable {
             pending_deletes: Vec::new(),
             last_revalidated: None,
             eviction: EvictionState::default(),
+            #[cfg(feature = "encrypt")]
+            encrypted: false,
+            #[cfg(feature = "encrypt")]
+            file_algorithm: None,
+            #[cfg(feature = "encrypt")]
+            remote_size: None,
         };
         table.inodes.insert(ROOT_INODE, root);
         table.path_to_inode.insert(root_path, ROOT_INODE);
@@ -638,6 +691,12 @@ impl InodeTable {
                 last_touched: AtomicU64::new(touch_seq),
                 ..Default::default()
             },
+            #[cfg(feature = "encrypt")]
+            encrypted: false,
+            #[cfg(feature = "encrypt")]
+            file_algorithm: None,
+            #[cfg(feature = "encrypt")]
+            remote_size: None,
         };
 
         self.inodes.insert(inode, entry);
@@ -701,6 +760,7 @@ impl InodeTable {
         new_etag: Option<String>,
         new_size: u64,
         new_mtime: SystemTime,
+        _content_type: Option<&str>,
     ) -> bool {
         if let Some(entry) = self.inodes.get_mut(&ino) {
             if entry.is_dirty() {
@@ -708,12 +768,34 @@ impl InodeTable {
             }
             entry.xet_hash = new_hash;
             entry.etag = new_etag;
-            entry.size = new_size;
             entry.mtime = new_mtime;
-            // Remote moved under us; the staging cache (if any) no longer
-            // matches xet_hash. An in-flight download observes this under
-            // its post-check and won't re-flag the cache.
             entry.staging_is_current = false;
+
+            #[cfg(feature = "encrypt")]
+            if let Some(ct) = _content_type {
+                match crate::crypto::parse_content_type(ct) {
+                    Ok(Some(info)) => {
+                        entry.apply_encryption_metadata(&info, new_size);
+                        return true;
+                    }
+                    Ok(None) => {
+                        entry.encrypted = false;
+                        entry.file_algorithm = None;
+                        entry.remote_size = None;
+                    }
+                    Err(_) => {
+                        entry.encrypted = true;
+                        entry.file_algorithm = None;
+                    }
+                }
+            }
+            #[cfg(feature = "encrypt")]
+            if entry.encrypted && _content_type.is_none() {
+                entry.remote_size = Some(new_size);
+                return true;
+            }
+
+            entry.size = new_size;
             true
         } else {
             false
@@ -1443,7 +1525,7 @@ mod tests {
         let new_mtime = UNIX_EPOCH + std::time::Duration::from_secs(1000);
 
         // Update succeeds on non-dirty file
-        assert!(table.update_remote_file(ino, Some("new_hash".to_string()), None, 200, new_mtime));
+        assert!(table.update_remote_file(ino, Some("new_hash".to_string()), None, 200, new_mtime, None));
         let entry = table.get(ino).unwrap();
         assert_eq!(entry.xet_hash, Some("new_hash".to_string()));
         assert_eq!(entry.size, 200);
@@ -1451,11 +1533,11 @@ mod tests {
 
         // Mark dirty — update should fail
         table.get_mut(ino).unwrap().set_dirty();
-        assert!(!table.update_remote_file(ino, Some("ignored".to_string()), None, 999, UNIX_EPOCH));
+        assert!(!table.update_remote_file(ino, Some("ignored".to_string()), None, 999, UNIX_EPOCH, None));
         assert_eq!(table.get(ino).unwrap().size, 200, "dirty file should not be updated");
 
         // Non-existent inode
-        assert!(!table.update_remote_file(9999, None, None, 0, UNIX_EPOCH));
+        assert!(!table.update_remote_file(9999, None, None, 0, UNIX_EPOCH, None));
     }
 
     #[test]

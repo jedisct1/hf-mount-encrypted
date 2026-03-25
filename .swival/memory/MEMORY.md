@@ -1,0 +1,3 @@
+- Filesystem read tools are restricted to the workspace; use `run_command` when inspecting external paths like `~/src/...`.
+- When `run_command` output is too large, the CLI saves it to `.swival/cmd_output_*.txt`; inspect that file with `read_file` instead of rerunning blindly.
+- Be conservative with `rg` regexes containing syntax like `#[` or many alternations; use simpler patterns or fixed-string searches to avoid parse errors.

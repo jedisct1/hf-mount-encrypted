@@ -1,0 +1,160 @@
+diff --git a/src/bin/hf-mount-fuse-sidecar.rs b/src/bin/hf-mount-fuse-sidecar.rs
+index 69761b6..eaee58c 100644
+--- a/src/bin/hf-mount-fuse-sidecar.rs
++++ b/src/bin/hf-mount-fuse-sidecar.rs
+@@ -315,22 +315,10 @@ fn write_error(path: &Path, msg: &str) {
+ fn run_mount(fuse_fd: OwnedFd, mount_args: MountArgs, error_path: PathBuf) {
+     let label = mount_args.source.label();
+ 
+-    // build() panics on auth/config errors (e.g. invalid token, CAS 401).
+-    // Catch the panic so we can write the error to the error file for the
+-    // CSI driver to report as FailedMount.
+-    let setup = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+-        build(mount_args.source, mount_args.options, false)
+-    })) {
+-        Ok(s) => s,
+-        Err(panic) => {
+-            let msg = match panic.downcast_ref::<String>() {
+-                Some(s) => s.clone(),
+-                None => match panic.downcast_ref::<&str>() {
+-                    Some(s) => s.to_string(),
+-                    None => "unknown panic".to_string(),
+-                },
+-            };
+-            write_error(&error_path, &format!("Setup failed for {}: {}", label, msg));
++    let setup = match build(mount_args.source, mount_args.options, false) {
++        Ok(setup) => setup,
++        Err(err) => {
++            write_error(&error_path, &format!("Setup failed for {}: {}", label, err));
+             return;
+         }
+     };
+diff --git a/src/bin/hf-mount-fuse.rs b/src/bin/hf-mount-fuse.rs
+index 96a5cac..eea9afd 100644
+--- a/src/bin/hf-mount-fuse.rs
++++ b/src/bin/hf-mount-fuse.rs
+@@ -4,7 +4,13 @@ use hf_mount::fuse::mount_fuse;
+ use hf_mount::setup::setup;
+ 
+ fn main() {
+-    let s = setup(false);
++    let s = match setup(false) {
++        Ok(setup) => setup,
++        Err(err) => {
++            tracing::error!("Setup failed: {}", err);
++            std::process::exit(1);
++        }
++    };
+     let mut daemon_guard = hf_mount::daemon::DaemonGuard::from_env();
+ 
+     let session = match mount_fuse(&s, daemon_guard.as_mut(), None) {
+diff --git a/src/bin/hf-mount-nfs.rs b/src/bin/hf-mount-nfs.rs
+index 61d6421..d0421ed 100644
+--- a/src/bin/hf-mount-nfs.rs
++++ b/src/bin/hf-mount-nfs.rs
+@@ -3,7 +3,13 @@ use tracing::{error, info};
+ use hf_mount::setup::setup;
+ 
+ fn main() {
+-    let s = setup(true);
++    let s = match setup(true) {
++        Ok(setup) => setup,
++        Err(err) => {
++            error!("Setup failed: {}", err);
++            std::process::exit(1);
++        }
++    };
+     let mut daemon_guard = hf_mount::daemon::DaemonGuard::from_env();
+ 
+     if let Err(e) = s.runtime.block_on(hf_mount::nfs::mount_nfs(
+diff --git a/src/setup.rs b/src/setup.rs
+index c3211fc..e8759df 100644
+--- a/src/setup.rs
++++ b/src/setup.rs
+@@ -9,6 +9,7 @@ use xet_data::processing::data_client::default_config;
+ use xet_data::processing::{CacheConfig, FileDownloadSession, create_remote_client, get_cache};
+ 
+ use crate::cached_xet_client::CachedXetClient;
++use crate::error::Result;
+ use crate::hub_api::{HubApiClient, HubTokenRefresher, SourceKind, parse_repo_id, split_path_prefix};
+ use crate::virtual_fs::{VfsConfig, VirtualFs};
+ use crate::xet::{StagingDir, XetSessions};
+@@ -221,7 +222,7 @@ pub fn init_tracing(daemon: bool) {
+ 
+ /// Build tokio runtime, storage client, Hub client, and VFS.
+ /// `is_nfs` controls whether advanced writes are forced (NFS has no open/close).
+-pub fn build(source: Source, options: MountOptions, is_nfs: bool) -> MountSetup {
++pub fn build(source: Source, options: MountOptions, is_nfs: bool) -> Result<MountSetup> {
+     let runtime = tokio::runtime::Builder::new_multi_thread()
+         .enable_all()
+         .build()
+@@ -321,7 +322,7 @@ pub fn build(source: Source, options: MountOptions, is_nfs: bool) -> MountSetup
+     // Repos need a staging dir for HTTP download cache (open_readonly),
+     // even when advanced_writes is disabled.
+     let staging_dir = if advanced_writes || hub_client.is_repo() {
+-        Some(StagingDir::new(&options.cache_dir))
++        Some(StagingDir::new(&options.cache_dir)?)
+     } else {
+         None
+     };
+@@ -396,7 +397,7 @@ pub fn build(source: Source, options: MountOptions, is_nfs: bool) -> MountSetup
+         },
+     );
+ 
+-    MountSetup {
++    Ok(MountSetup {
+         runtime,
+         virtual_fs,
+         mount_point,
+@@ -407,14 +408,14 @@ pub fn build(source: Source, options: MountOptions, is_nfs: bool) -> MountSetup
+         max_threads: options.max_threads,
+         metadata_ttl_ms: options.metadata_ttl_ms,
+         fuse_owner_only: options.fuse_owner_only,
+-    }
++    })
+ }
+ 
+ // ── Combined entry point (foreground binaries) ──────────────────────
+ 
+ /// Parse CLI args, build VFS and all dependencies.
+ /// `is_nfs` controls whether advanced writes are forced (NFS has no open/close).
+-pub fn setup(is_nfs: bool) -> MountSetup {
++pub fn setup(is_nfs: bool) -> Result<MountSetup> {
+     raise_fd_limit();
+     let args = Args::parse();
+     init_tracing(false);
+diff --git a/src/test_mocks.rs b/src/test_mocks.rs
+index 2118bab..8819f1c 100644
+--- a/src/test_mocks.rs
++++ b/src/test_mocks.rs
+@@ -464,7 +464,7 @@ pub fn make_test_vfs(
+     let staging_dir = if opts.advanced_writes || hub.is_repo() {
+         let path = std::env::temp_dir().join(format!("hf_mount_test_{}", std::process::id()));
+         std::fs::create_dir_all(&path).expect("failed to create temp staging dir");
+-        Some(StagingDir::new(&path))
++        Some(StagingDir::new(&path).expect("failed to create staging dir"))
+     } else {
+         None
+     };
+diff --git a/src/xet.rs b/src/xet.rs
+index f9ca64c..739e533 100644
+--- a/src/xet.rs
++++ b/src/xet.rs
+@@ -186,13 +186,13 @@ pub struct StagingDir {
+ }
+ 
+ impl StagingDir {
+-    pub fn new(cache_dir: &Path) -> Self {
++    pub fn new(cache_dir: &Path) -> Result<Self> {
+         let dir = cache_dir.join("staging");
+-        std::fs::create_dir_all(&dir).unwrap_or_else(|e| panic!("Failed to create staging dir {:?}: {e}", dir));
+-        Self {
++        std::fs::create_dir_all(&dir)?;
++        Ok(Self {
+             dir,
+             session_key: rand_u64(),
+-        }
++        })
+     }
+ 
+     /// Root directory of the staging area.

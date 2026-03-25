@@ -86,6 +86,7 @@ impl MockHub {
             xet_hash: xet_hash.map(|s| s.to_string()),
             oid: oid.map(|s| s.to_string()),
             mtime: None,
+            content_type: None,
         });
         if let Some(hash) = xet_hash {
             self.head_responses.lock().unwrap().insert(
@@ -100,6 +101,21 @@ impl MockHub {
         }
     }
 
+    pub fn add_file_with_content_type(
+        &self,
+        path: &str,
+        size: u64,
+        xet_hash: Option<&str>,
+        content_type: Option<String>,
+    ) {
+        self.add_file(path, size, xet_hash, None);
+        if let Some(ct) = content_type {
+            if let Some(last) = self.tree.lock().unwrap().last_mut() {
+                last.content_type = Some(ct);
+            }
+        }
+    }
+
     pub fn add_dir(&self, path: &str) {
         self.tree.lock().unwrap().push(TreeEntry {
             path: path.to_string(),
@@ -108,6 +124,7 @@ impl MockHub {
             xet_hash: None,
             oid: None,
             mtime: None,
+            content_type: None,
         });
     }
 
@@ -199,6 +216,7 @@ impl HubOps for MockHub {
                         xet_hash: None,
                         oid: None,
                         mtime: None,
+                        content_type: None,
                     });
                 }
             } else {
@@ -527,6 +545,8 @@ pub struct TestOpts {
     pub metadata_ttl: Duration,
     pub inode_soft_limit: usize,
     pub max_staging_size: u64,
+    #[cfg(feature = "encrypt")]
+    pub encryption_config: Option<crate::crypto::EncryptionConfig>,
 }
 
 impl Default for TestOpts {
@@ -539,6 +559,8 @@ impl Default for TestOpts {
             metadata_ttl: Duration::from_secs(1),
             inode_soft_limit: 0,
             max_staging_size: 0,
+            #[cfg(feature = "encrypt")]
+            encryption_config: None,
         }
     }
 }
@@ -581,6 +603,9 @@ pub fn make_test_vfs(
     opts: TestOpts,
     runtime: &tokio::runtime::Runtime,
 ) -> Arc<crate::virtual_fs::VirtualFs> {
+    #[cfg(feature = "encrypt")]
+    let effective_advanced_writes = opts.advanced_writes || opts.overlay || opts.encryption_config.is_some();
+    #[cfg(not(feature = "encrypt"))]
     let effective_advanced_writes = opts.advanced_writes || opts.overlay;
 
     let overlay_backing = if opts.overlay {
@@ -609,7 +634,7 @@ pub fn make_test_vfs(
         overlay_backing,
         crate::virtual_fs::VfsConfig {
             read_only: opts.read_only,
-            advanced_writes: opts.advanced_writes,
+            advanced_writes: effective_advanced_writes,
             uid: 1000,
             gid: 1000,
             poll_interval_secs: 0,
@@ -622,6 +647,8 @@ pub fn make_test_vfs(
             flush_max_batch_window: Duration::from_secs(1),
             inode_soft_limit: opts.inode_soft_limit,
             lru_sweep_interval: Duration::from_millis(50),
+            #[cfg(feature = "encrypt")]
+            encryption_config: opts.encryption_config,
         },
     )
 }
@@ -665,6 +692,8 @@ pub fn make_overlay_test_vfs_with_root(
             flush_max_batch_window: Duration::from_secs(1),
             inode_soft_limit: 0,
             lru_sweep_interval: Duration::from_secs(5),
+            #[cfg(feature = "encrypt")]
+            encryption_config: None,
         },
     );
     OverlayTestVfs {

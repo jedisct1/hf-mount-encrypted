@@ -1,0 +1,18 @@
+diff --git a/src/nfs.rs b/src/nfs.rs
+index 4bdf7e1..e6d2078 100644
+--- a/src/nfs.rs
++++ b/src/nfs.rs
+@@ -229,11 +229,11 @@ impl NFSFileSystem for NFSAdapter {
+             set_mode3::Void => None,
+         };
+         let uid = match setattr.uid {
+-            set_uid3::uid(u) => Some(u),
++            set_uid3::uid(_) => return Err(nfsstat3::NFS3ERR_PERM),
+             set_uid3::Void => None,
+         };
+         let gid = match setattr.gid {
+-            set_gid3::gid(g) => Some(g),
++            set_gid3::gid(_) => return Err(nfsstat3::NFS3ERR_PERM),
+             set_gid3::Void => None,
+         };
+         let atime = match setattr.atime {
