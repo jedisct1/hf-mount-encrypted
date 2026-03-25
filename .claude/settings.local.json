@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(update-config)",
+      "Bash(jq:*)",
+      "Bash(grep -r \"segment\\\\|chunk\" /Users/j/src/rust-aegis/src/c/raf/*.rs)",
+      "Bash(cargo check:*)",
+      "Bash(cargo test:*)",
+      "Bash(cargo clippy:*)",
+      "Bash(cargo run:*)",
+      "Bash(cargo:*)"
+    ]
+  }
+}

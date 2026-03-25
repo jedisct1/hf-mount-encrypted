@@ -32,6 +32,7 @@ pub(crate) struct FlushManager {
 }
 
 impl FlushManager {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         xet_sessions: Arc<dyn XetOps>,
         staging_dir: StagingDir,
@@ -40,6 +41,7 @@ impl FlushManager {
         runtime: &tokio::runtime::Handle,
         debounce: Duration,
         max_batch_window: Duration,
+        #[cfg(feature = "encrypt")] encryption_config: Option<crate::crypto::EncryptionConfig>,
     ) -> Self {
         let errors = Arc::new(Mutex::new(HashMap::new()));
         let pending_deletes = Arc::new(Mutex::new(Vec::new()));
@@ -58,6 +60,8 @@ impl FlushManager {
             debounce,
             max_batch_window,
             bg_deletes,
+            #[cfg(feature = "encrypt")]
+            encryption_config,
         ));
 
         Self {
@@ -173,6 +177,7 @@ async fn flush_loop(
     debounce: Duration,
     max_batch_window: Duration,
     pending_deletes: Arc<Mutex<Vec<String>>>,
+    #[cfg(feature = "encrypt")] encryption_config: Option<crate::crypto::EncryptionConfig>,
 ) {
     loop {
         // Wait for the first signal
@@ -219,6 +224,8 @@ async fn flush_loop(
                 &*hub_client,
                 &inodes,
                 &flush_errors,
+                #[cfg(feature = "encrypt")]
+                &encryption_config,
             )
             .await;
         }
@@ -259,17 +266,60 @@ async fn flush_pending_deletes(queue: &Mutex<Vec<String>>, hub_client: &dyn HubO
     }
 }
 
+#[cfg(feature = "encrypt")]
+fn encrypt_staging(
+    staging_path: &std::path::Path,
+    ino: u64,
+    inodes: &RwLock<InodeTable>,
+    config: &crate::crypto::EncryptionConfig,
+) -> crate::error::Result<PathBuf> {
+    let algorithm = inodes
+        .read()
+        .expect("inodes poisoned")
+        .get(ino)
+        .and_then(|e| e.file_algorithm)
+        .unwrap_or(config.algorithm);
+    let derived_key = config.derive_key(algorithm);
+    let enc_path = staging_path.with_extension("enc");
+    crate::crypto::encrypt_file(staging_path, &enc_path, &derived_key, algorithm, config.chunk_size)?;
+    Ok(enc_path)
+}
+
+#[cfg(feature = "encrypt")]
+fn build_flush_content_type(
+    ino: u64,
+    plaintext_size: u64,
+    ciphertext_size: u64,
+    inodes: &RwLock<InodeTable>,
+    config: &crate::crypto::EncryptionConfig,
+) -> String {
+    let algorithm = inodes
+        .read()
+        .expect("inodes poisoned")
+        .get(ino)
+        .and_then(|e| e.file_algorithm)
+        .unwrap_or(config.algorithm);
+    crate::crypto::format_content_type(&crate::crypto::EncryptedFileInfo {
+        algorithm,
+        plaintext_size,
+        ciphertext_size,
+        chunk_size: config.chunk_size,
+    })
+}
+
 struct FlushItem {
     ino: u64,
     full_path: String,
     staging_path: PathBuf,
     pending_deletes: Vec<String>,
     dirty_generation: u64,
+    plaintext_size: u64,
     /// Hash from the last successful commit, used to skip redundant Hub commits
     /// when the CAS upload produces the same hash (content unchanged).
     prev_xet_hash: Option<String>,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn flush_batch(
     pending: Vec<u64>,
     xet_sessions: &dyn XetOps,
@@ -277,6 +327,7 @@ async fn flush_batch(
     hub_client: &dyn HubOps,
     inodes: &RwLock<InodeTable>,
     flush_errors: &Mutex<HashMap<u64, String>>,
+    #[cfg(feature = "encrypt")] encryption_config: &Option<crate::crypto::EncryptionConfig>,
 ) {
     // Dedup by inode (keep last request per ino).
     // Walk backwards so last occurrence wins, then reverse in-place.
@@ -317,6 +368,7 @@ async fn flush_batch(
                 Some(FlushItem {
                     ino,
                     full_path: entry.full_path.to_string(),
+                    plaintext_size: entry.size,
                     staging_path,
                     pending_deletes: entry.pending_deletes.clone(),
                     dirty_generation: entry.dirty_generation,
@@ -330,6 +382,28 @@ async fn flush_batch(
         return;
     }
 
+    #[cfg(feature = "encrypt")]
+    let encrypted_paths: Vec<Option<PathBuf>> = if let Some(config) = encryption_config {
+        to_flush
+            .iter()
+            .map(
+                |item| match encrypt_staging(&item.staging_path, item.ino, inodes, config) {
+                    Ok(p) => Some(p),
+                    Err(e) => {
+                        error!("flush: encryption failed for ino={}: {}", item.ino, e);
+                        flush_errors
+                            .lock()
+                            .expect("flush_errors poisoned")
+                            .insert(item.ino, format!("encryption failed: {e}"));
+                        None
+                    }
+                },
+            )
+            .collect()
+    } else {
+        to_flush.iter().map(|_| None).collect()
+    };
+
     // Upload in chunks to bound FD usage (xet-core opens all staging files per
     // upload session), but accumulate all batch ops for a single Hub commit to
     // preserve the global adds-before-deletes ordering required by the Hub API.
@@ -337,8 +411,19 @@ async fn flush_batch(
     let mut upload_results = Vec::with_capacity(to_flush.len());
 
     for (chunk_idx, chunk) in to_flush.chunks(UPLOAD_CHUNK_SIZE).enumerate() {
-        let staging_paths: Vec<&std::path::Path> = chunk.iter().map(|item| item.staging_path.as_path()).collect();
-        match xet_sessions.upload_files(&staging_paths).await {
+        #[cfg(feature = "encrypt")]
+        let upload_paths: Vec<&std::path::Path> = {
+            let start = chunk_idx * UPLOAD_CHUNK_SIZE;
+            chunk
+                .iter()
+                .zip(encrypted_paths[start..start + chunk.len()].iter())
+                .map(|(item, enc)| enc.as_deref().unwrap_or(item.staging_path.as_path()))
+                .collect()
+        };
+        #[cfg(not(feature = "encrypt"))]
+        let upload_paths: Vec<&std::path::Path> = chunk.iter().map(|item| item.staging_path.as_path()).collect();
+
+        match xet_sessions.upload_files(&upload_paths).await {
             Ok(results) => {
                 assert_eq!(
                     results.len(),
@@ -396,11 +481,25 @@ async fn flush_batch(
             file_info.hash(),
             file_info.file_size().expect("upload returned XetFileInfo without size")
         );
+
+        #[cfg(feature = "encrypt")]
+        let content_type = encrypted_paths[i].as_ref().map(|_| {
+            build_flush_content_type(
+                item.ino,
+                item.plaintext_size,
+                file_info.file_size().expect("upload returned XetFileInfo without size"),
+                inodes,
+                encryption_config.as_ref().unwrap(),
+            )
+        });
+        #[cfg(not(feature = "encrypt"))]
+        let content_type: Option<String> = None;
+
         ops.push(BatchOp::AddFile {
             path: item.full_path.clone(),
             xet_hash: file_info.hash().to_string(),
             mtime: mtime_ms,
-            content_type: None,
+            content_type,
         });
         for old_path in &item.pending_deletes {
             delete_ops.push(BatchOp::DeleteFile { path: old_path.clone() });
@@ -414,11 +513,7 @@ async fn flush_batch(
             if unchanged[i]
                 && let Some(entry) = inode_table.get_mut(item.ino)
             {
-                entry.apply_commit(
-                    file_info.hash(),
-                    file_info.file_size().expect("upload returned XetFileInfo without size"),
-                    item.dirty_generation,
-                );
+                entry.apply_commit(file_info.hash(), item.plaintext_size, item.dirty_generation);
             }
         }
     }
@@ -451,12 +546,23 @@ async fn flush_batch(
             continue;
         }
         if let Some(entry) = inode_table.get_mut(item.ino) {
-            entry.apply_commit(
-                file_info.hash(),
-                file_info.file_size().expect("upload returned XetFileInfo without size"),
-                item.dirty_generation,
-            );
+            entry.apply_commit(file_info.hash(), item.plaintext_size, item.dirty_generation);
+            #[cfg(feature = "encrypt")]
+            if let Some(config) = encryption_config.as_ref()
+                && encrypted_paths[i].is_some()
+            {
+                entry.mark_encrypted(
+                    file_info.file_size().expect("upload returned XetFileInfo without size"),
+                    config.algorithm,
+                );
+            }
         }
+    }
+
+    // Clean up temp encrypted files
+    #[cfg(feature = "encrypt")]
+    for path in encrypted_paths.iter().flatten() {
+        let _ = std::fs::remove_file(path);
     }
 
     let changed_count = unchanged.iter().filter(|u| !**u).count();

@@ -1,0 +1,4 @@
+- [x] Inspect commit 71223f0 and current diff for parent-directory freshness logic
+- [x] Read the relevant VFS/poll/tests code paths before judging logic
+- [x] Run focused tests or commands to validate suspected bugs
+- [x] Report proven findings with file references and evidence

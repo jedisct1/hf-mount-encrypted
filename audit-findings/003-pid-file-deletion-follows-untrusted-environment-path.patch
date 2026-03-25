@@ -1,0 +1,18 @@
+diff --git a/src/daemon.rs b/src/daemon.rs
+index 7484f3f..81b63df 100644
+--- a/src/daemon.rs
++++ b/src/daemon.rs
+@@ -155,6 +155,13 @@ impl DaemonGuard {
+             std::env::remove_var("HF_MOUNT_DAEMON_FD");
+             std::env::remove_var("HF_MOUNT_DAEMON_PID_FILE");
+         }
++
++        let pid_file = std::fs::canonicalize(pid_file).ok()?;
++        let pids_dir = std::fs::canonicalize(state_dir().join("pids")).ok()?;
++        if !pid_file.starts_with(&pids_dir) {
++            return None;
++        }
++
+         Some(Self {
+             write_fd: fd,
+             pid_file,

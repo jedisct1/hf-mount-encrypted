@@ -1,0 +1,21 @@
+diff --git a/src/nfs.rs b/src/nfs.rs
+index 4bdf7e1..bfbd8c7 100644
+--- a/src/nfs.rs
++++ b/src/nfs.rs
+@@ -280,14 +280,8 @@ impl NFSFileSystem for NFSAdapter {
+             set_mode3::mode(m) => (m & 0o7777) as u16,
+             set_mode3::Void => 0o644,
+         };
+-        let uid = match attr.uid {
+-            set_uid3::uid(u) => u,
+-            set_uid3::Void => self.virtual_fs.default_uid(),
+-        };
+-        let gid = match attr.gid {
+-            set_gid3::gid(g) => g,
+-            set_gid3::Void => self.virtual_fs.default_gid(),
+-        };
++        let uid = self.virtual_fs.default_uid();
++        let gid = self.virtual_fs.default_gid();
+         let (ino, fattr) = self.create_file(dirid, filename, mode, uid, gid).await?;
+         // Schedule a flush so empty files (e.g. `touch`) get committed to remote.
+         self.virtual_fs.schedule_flush(ino);

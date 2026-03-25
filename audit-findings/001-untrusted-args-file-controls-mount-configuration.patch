@@ -1,0 +1,85 @@
+diff --git a/src/bin/hf-mount-fuse-sidecar.rs b/src/bin/hf-mount-fuse-sidecar.rs
+index 69761b6..60f9c7c 100644
+--- a/src/bin/hf-mount-fuse-sidecar.rs
++++ b/src/bin/hf-mount-fuse-sidecar.rs
+@@ -9,6 +9,7 @@
+ 
+ use std::io;
+ use std::os::fd::{FromRawFd, OwnedFd};
++use std::os::unix::fs::{MetadataExt, PermissionsExt};
+ use std::os::unix::io::AsRawFd;
+ use std::os::unix::net::UnixStream;
+ use std::path::{Path, PathBuf};
+@@ -190,14 +191,26 @@ fn wait_for_configs(
+ 
+ fn discover_pending(tmp_dir: &Path) -> io::Result<Vec<PendingMount>> {
+     let volumes_dir = tmp_dir.join(".volumes");
+-    let entries = match std::fs::read_dir(&volumes_dir) {
+-        Ok(entries) => entries,
+-        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+-        Err(err) => return Err(err),
+-    };
++    if let Err(err) = ensure_trusted_path(&volumes_dir, true) {
++        if err.kind() == io::ErrorKind::NotFound {
++            return Ok(Vec::new());
++        }
++        return Err(err);
++    }
++    let entries = std::fs::read_dir(&volumes_dir)?;
+     let mut mounts = Vec::new();
+     for entry in entries.filter_map(|e| e.ok()) {
++        if let Err(err) = ensure_trusted_path(&entry.path(), true) {
++            warn!("Skipping {}: {}", entry.path().display(), err);
++            continue;
++        }
++
+         let args_path = entry.path().join("args");
++        if let Err(err) = ensure_trusted_path(&args_path, false) {
++            warn!("Skipping {}: {}", args_path.display(), err);
++            continue;
++        }
++
+         let data = match std::fs::read_to_string(&args_path) {
+             Ok(data) => data,
+             Err(_) => continue,
+@@ -219,6 +232,40 @@ fn discover_pending(tmp_dir: &Path) -> io::Result<Vec<PendingMount>> {
+     Ok(mounts)
+ }
+ 
++fn ensure_trusted_path(path: &Path, expect_dir: bool) -> io::Result<()> {
++    let metadata = std::fs::symlink_metadata(path)?;
++    let file_type = metadata.file_type();
++    if expect_dir {
++        if !file_type.is_dir() {
++            return Err(io::Error::new(
++                io::ErrorKind::InvalidData,
++                format!("{} is not a directory", path.display()),
++            ));
++        }
++    } else if !file_type.is_file() {
++        return Err(io::Error::new(
++            io::ErrorKind::InvalidData,
++            format!("{} is not a regular file", path.display()),
++        ));
++    }
++
++    if metadata.uid() != 0 {
++        return Err(io::Error::new(
++            io::ErrorKind::PermissionDenied,
++            format!("{} is not owned by root", path.display()),
++        ));
++    }
++
++    if metadata.permissions().mode() & 0o022 != 0 {
++        return Err(io::Error::new(
++            io::ErrorKind::PermissionDenied,
++            format!("{} must not be group/world writable", path.display()),
++        ));
++    }
++
++    Ok(())
++}
++
+ /// Connect to the CSI driver's Unix socket and receive the FUSE fd via SCM_RIGHTS.
+ /// Retries on ENOENT/ECONNREFUSED until the socket appears or timeout expires.
+ ///
