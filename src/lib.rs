@@ -1,5 +1,8 @@
+pub mod base91;
 pub mod cached_xet_client;
 pub mod daemon;
+#[cfg(feature = "encrypt")]
+pub mod encryption;
 pub mod error;
 pub mod file_cache;
 #[cfg(feature = "fuse")]
