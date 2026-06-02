@@ -1,22 +1,34 @@
-# hf-mount
+# hf-mount with client-side encryption
 
 <img width="1400" height="386" alt="image" src="https://github.com/user-attachments/assets/d68eac8c-4e28-4d2d-93b2-b049da846397" />
 
 Mount [Hugging Face Buckets](https://huggingface.co/docs/hub/storage-buckets) and repos as local filesystems. No download, no copy, no waiting.
 
-```bash
-hf-mount start bucket myuser/my-bucket /tmp/data
-```
+This fork includes transparent client-side encryption.
 
-Also works with any model or dataset repo (read-only):
+Bucket creation:
 
 ```bash
-hf-mount start repo openai/gpt-oss-20b /tmp/gpt-oss
+hf buckets create my-bucket
 ```
+
+Generate a 32-byte secret key in a file named `key` and point the mount at it:
+
+```bash
+# 32 random bytes (or 64 hex characters)
+head -c 32 /dev/urandom > key.bin
+```
+
+```bash
+hf mount start --encryption-key-file key.bin bucket myuser/my-bucket /tmp/data
+```
+
+See "Client-side encryption" below for more information.
 
 Commands will pick up your `HF_TOKEN` from the environment, or you can pass it explicitly with `--hf-token`.
 
 Then use your local folders as usual:
+
 ```python
 from transformers import AutoModelForCausalLM
 model = AutoModelForCausalLM.from_pretrained("/tmp/gpt-oss")  # reads on demand, no download step
@@ -25,6 +37,7 @@ model = AutoModelForCausalLM.from_pretrained("/tmp/gpt-oss")  # reads on demand,
 hf-mount exposes [Hugging Face Buckets](https://huggingface.co/docs/hub/storage-buckets) and [Hub repos](https://huggingface.co) as a local filesystem via FUSE or NFS. Files are fetched lazily on first read, so only the bytes your code actually touches ever hit the network.
 
 Two backends are available:
+
 - **NFS** (recommended) -- works everywhere, no root, no kernel extension
 - **FUSE** -- tighter kernel integration, requires root or [macFUSE](https://osxfuse.github.io/) on macOS
 
@@ -46,10 +59,10 @@ On macOS, this installs the NFS backend only (`hf-mount`, `hf-mount-nfs`). For t
 
 Binaries are available on [GitHub Releases](https://github.com/huggingface/hf-mount/releases):
 
-| Platform | Daemon | NFS | FUSE |
-| --- | --- | --- | --- |
-| Linux x86_64 | `hf-mount-x86_64-linux` | `hf-mount-nfs-x86_64-linux` | `hf-mount-fuse-x86_64-linux` |
-| Linux aarch64 | `hf-mount-aarch64-linux` | `hf-mount-nfs-aarch64-linux` | `hf-mount-fuse-aarch64-linux` |
+| Platform            | Daemon                        | NFS                               | FUSE                               |
+| ------------------- | ----------------------------- | --------------------------------- | ---------------------------------- |
+| Linux x86_64        | `hf-mount-x86_64-linux`       | `hf-mount-nfs-x86_64-linux`       | `hf-mount-fuse-x86_64-linux`       |
+| Linux aarch64       | `hf-mount-aarch64-linux`      | `hf-mount-nfs-aarch64-linux`      | `hf-mount-fuse-aarch64-linux`      |
 | macOS Apple Silicon | `hf-mount-arm64-apple-darwin` | `hf-mount-nfs-arm64-apple-darwin` | `hf-mount-fuse-arm64-apple-darwin` |
 
 ### System dependencies (FUSE only)
@@ -230,6 +243,8 @@ hf-mount stop /tmp/data          # daemon mounts
 | `--inode-soft-limit` | `0` | Soft cap on the in-memory inode table (0 disables). See "Bounding inode memory" below. |
 | `--lru-sweep-interval-ms` | `5000` | Background LRU sweep interval in milliseconds. Only meaningful when `--inode-soft-limit > 0`. |
 | `--overlay` | `false` | Treat the mount point as a writable local layer over the remote source. Local files persist on disk; writes are never pushed to the remote. See "Overlay mode" below. |
+| `--encryption-key-file` | | Path to a 32-byte master key (raw or 64 hex chars). Encrypts contents and names client-side. Requires `--features encrypt`; implies `--advanced-writes`. See "Client-side encryption". |
+| `--encryption-algorithm` | `aegis-128x2` | Content encryption algorithm (only `aegis-128x2` is supported today). |
 
 ### Bounding inode memory
 
@@ -257,12 +272,14 @@ hf-mount start --overlay bucket myorg/torch-compile-cache "$TORCHINDUCTOR_CACHE_
 ```
 
 What you can do:
+
 - Read every file from the remote source.
 - Read every file already present in the local layer; when a name exists in both, the local copy wins.
 - Create new files and directories — they land in the local layer.
 - Modify, rename, delete, or chmod any file or directory that lives in the local layer.
 
 What you can't do:
+
 - Modify, rename, delete, or chmod a file that exists only on the remote. These operations fail with a permission error. To diverge from a remote file, copy it under a new name through the mount; the copy is a regular local file you own.
 - Shadow an existing remote name with a new local file once the mount is active. If you need a local file at a name that already exists on the remote, drop it in the mount-point directory *before* starting the mount — pre-existing files at the mount point stay visible and take precedence.
 - Place symlinks in the local layer and expect them to show up. Symlinks are hidden from the merged view so the mount can't be tricked into reading or writing outside the mount point.
@@ -283,6 +300,61 @@ RUST_LOG=hf_mount=debug hf-mount-fuse repo gpt2 /mnt/gpt2
 - **Remote sync** -- background polling detects remote changes and updates the local view
 - **POSIX metadata** -- chmod, chown, timestamps, symlinks (in-memory only, lost on unmount)
 - **Overlay mode** (`--overlay`) -- mount point doubles as a writable local layer; remote stays read-only
+- **Client-side encryption** (`--features encrypt`) -- file contents and names encrypted locally; the Hub only ever sees ciphertext
+
+## Client-side encryption
+
+Files can be encrypted on the client before upload and decrypted transparently on read, so the Hub only ever stores ciphertext. Both file contents and the names they are stored under.
+
+Generate a 32-byte master key and point the mount at it:
+
+```bash
+# 32 random bytes (or 64 hex characters)
+head -c 32 /dev/urandom > /path/to/key.bin
+
+hf-mount start --encryption-key-file /path/to/key.bin bucket myuser/encrypted-bucket /tmp/data
+```
+
+All encrypted objects are stored under a single `.enc` directory at the bucket root, so a raw (keyless) view of the bucket shows only that one entry:
+
+```
+bucket root
+└── .enc/                          literal name, never encrypted
+    ├── <E("dir")>/                HCTR2 + base91 components
+    │   └── <E("dir/file")>
+    └── <E("top-level-file")>
+```
+
+Unencrypted files remain at the bucket root as before. The `.enc` directory itself is not a ciphertext component and is never fed to the path cipher, so encrypted trees can still be moved between buckets without re-encryption.
+
+### What is and isn't hidden
+
+Encrypted:
+
+- File contents -- AEGIS-128X2, authenticated, so tampering or truncation is caught on read.
+- File and directory names -- every path component, each bound to the plaintext path above it, so the server can't move a name into a different directory undetected.
+
+Visible to the server:
+
+- The directory tree shape -- how deep it is and how many entries each directory holds.
+- Timestamps.
+- Approximate sizes. Content size is rounded up to whole 64 KiB chunks, so any file up to 64 KiB is size-indistinguishable from another; name length leaks only its 32-byte padding bucket.
+
+Encrypted and plaintext objects can coexist in one bucket: a name that doesn't decrypt is skipped, so you only ever see the files that belong to your key.
+
+Plaintext never touches local disk -- the on-disk staging file is a ciphertext container from the moment it is created.
+
+### Mixed-content buckets
+
+A single bucket can contain unencrypted files, encrypted files, and files encrypted with different keys — all at once. The layout keeps them partitioned: plaintext files sit at the bucket root as before, while all ciphertext is gathered under `.enc/`. They never intermingle in one listing.
+
+When mounted with an encryption key, you see both unencrypted files (at the root) and encrypted files that decrypt with your key (inside `.enc/`). Names inside `.enc` that don't decrypt are skipped, so multiple keys can share a bucket and each key sees only its own files.
+
+### Limitations
+
+- File names and encrypted file data are not bound to a specific user or bucket. This is intentional and allows buckets to be renamed and synchronized.
+- Similarly, unlike file names, encrypted file data is not bound to paths. This allows files to be moved atomically and copied while taking advantage of XET deduplication.
+- File names are limited to about 194 bytes.
 
 ## Consistency model
 
@@ -297,13 +369,13 @@ Files can be stale for up to `--metadata-ttl-ms` (default 10 s) after a remote u
 
 ### Writes
 
-| | Streaming (default) | Advanced (`--advanced-writes`) |
-| --- | --- | --- |
-| Write pattern | Append-only (sequential) | Random writes, seek, overwrite |
-| Storage | In-memory buffer | Local staging file on disk |
-| Modify existing files | Overwrite only (O_TRUNC) | Yes (downloads file first) |
-| Durability | On close | Async, debounced (2 s / 30 s max) |
-| Disk space needed | None | Full file size per open file |
+|                       | Streaming (default)      | Advanced (`--advanced-writes`)    |
+| --------------------- | ------------------------ | --------------------------------- |
+| Write pattern         | Append-only (sequential) | Random writes, seek, overwrite    |
+| Storage               | In-memory buffer         | Local staging file on disk        |
+| Modify existing files | Overwrite only (O_TRUNC) | Yes (downloads file first)        |
+| Durability            | On close                 | Async, debounced (2 s / 30 s max) |
+| Disk space needed     | None                     | Full file size per open file      |
 
 **Streaming mode** buffers writes in memory and uploads on `close()`. A crash before close means data loss.
 
@@ -315,12 +387,12 @@ Files can be stale for up to `--metadata-ttl-ms` (default 10 s) after a remote u
 
 ### FUSE vs NFS
 
-| | FUSE | NFS |
-| --- | --- | --- |
-| Metadata revalidation | Per-file, within TTL | No (NFS uses file handles) |
-| Page cache invalidation | Supported | Not supported by NFS protocol |
-| Staleness window | ~10 s | Up to poll interval (30 s) |
-| Write mode | Streaming by default | Advanced always |
+|                         | FUSE                 | NFS                           |
+| ----------------------- | -------------------- | ----------------------------- |
+| Metadata revalidation   | Per-file, within TTL | No (NFS uses file handles)    |
+| Page cache invalidation | Supported            | Not supported by NFS protocol |
+| Staleness window        | ~10 s                | Up to poll interval (30 s)    |
+| Write mode              | Streaming by default | Advanced always               |
 
 ## How it works
 
@@ -349,6 +421,9 @@ cargo test --lib --features fuse,nfs
 # Integration tests (require HF_TOKEN and FUSE)
 HF_TOKEN=... cargo test --release --features fuse,nfs --test fuse_ops -- --test-threads=1 --nocapture
 HF_TOKEN=... cargo test --release --features fuse,nfs --test nfs_ops -- --test-threads=1 --nocapture
+
+# Encrypted round-trip over NFS against a live bucket (requires HF_TOKEN)
+HF_TOKEN=... cargo test --release --features nfs,encrypt --test encryption_ops -- --test-threads=1 --nocapture
 
 # Repo mount test (public repo, no token needed)
 cargo test --release --features nfs --test repo_ops -- --test-threads=1 --nocapture

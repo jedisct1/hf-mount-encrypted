@@ -223,6 +223,52 @@ pub struct HubApiClient {
     /// Optional subfolder prefix. When non-empty, all API calls transparently
     /// prepend this to outgoing paths and strip it from incoming TreeEntry paths.
     path_prefix: String,
+    /// When set, every outgoing path is encrypted and every incoming listing path
+    /// is decrypted at this boundary, so plaintext names never reach the remote.
+    #[cfg(feature = "encrypt")]
+    path_cipher: Option<std::sync::Arc<crate::encryption::path::PathCipher>>,
+}
+
+/// A bucket-absolute path on its way to the remote.
+///
+/// The only way to build one is [`HubApiClient::prefixed_path`], which encrypts
+/// it whenever a path cipher is configured. Request builders accept *only* this
+/// type, so a plaintext name cannot reach a URL or request body by accident.
+struct RemotePath {
+    path: String,
+    /// True when `path` is ciphertext and must be percent-encoded for URLs.
+    #[cfg(feature = "encrypt")]
+    encrypted: bool,
+}
+
+impl RemotePath {
+    /// The path as it travels in a JSON request body: raw, not URL-escaped.
+    fn as_body(&self) -> &str {
+        &self.path
+    }
+
+    /// The path interpolated into a request URL. Encrypted paths are
+    /// percent-encoded per segment; plaintext paths are left untouched to
+    /// preserve existing behavior.
+    fn as_url(&self) -> std::borrow::Cow<'_, str> {
+        #[cfg(feature = "encrypt")]
+        if self.encrypted {
+            return std::borrow::Cow::Owned(crate::encryption::url::encode_path_segments(&self.path));
+        }
+        std::borrow::Cow::Borrowed(&self.path)
+    }
+
+    /// Returns `true` when the stored path is empty.
+    ///
+    /// For encrypted clients this is always `false` because `prefixed_path`
+    /// prepends `.enc/`, so even the bucket root yields a non-empty result.
+    /// This is intentional: `list_tree_bucket` and `list_tree_repo` branch on
+    /// this flag to choose between the bare `/tree` URL (empty) and the
+    /// path-ful `/tree/{path}` variant — encrypted clients must always take
+    /// the latter.
+    fn is_empty(&self) -> bool {
+        self.path.is_empty()
+    }
 }
 
 /// Parse a repo ID, extracting the type from an optional prefix.
@@ -473,6 +519,8 @@ impl HubApiClient {
             source,
             last_modified,
             path_prefix,
+            #[cfg(feature = "encrypt")]
+            path_cipher: None,
         }))
     }
 
@@ -491,6 +539,8 @@ impl HubApiClient {
             },
             last_modified: UNIX_EPOCH,
             path_prefix: String::new(),
+            #[cfg(feature = "encrypt")]
+            path_cipher: None,
         })
     }
 
@@ -542,15 +592,81 @@ impl HubApiClient {
         &self.path_prefix
     }
 
-    /// Join `path_prefix` and `path` into the full API path.
-    fn prefixed_path(&self, path: &str) -> String {
-        if self.path_prefix.is_empty() {
+    /// Join `path_prefix` and `path` into the bucket-absolute path, encrypting it
+    /// when a path cipher is configured. This is the single chokepoint through
+    /// which every outgoing path passes before it reaches a request.
+    fn prefixed_path(&self, path: &str) -> Result<RemotePath> {
+        let joined = if self.path_prefix.is_empty() {
             path.to_string()
         } else if path.is_empty() {
             self.path_prefix.clone()
         } else {
             format!("{}/{}", self.path_prefix, path)
+        };
+
+        #[cfg(feature = "encrypt")]
+        if let Some(cipher) = &self.path_cipher {
+            use crate::encryption::ENC_ROOT;
+
+            let encrypted = cipher
+                .encrypt_path(&joined)
+                .map_err(|e| Error::hub(format!("encrypt path: {e}")))?;
+            // Prepend the .enc/ wrapper directory so all ciphertext lives in one
+            // bucket-root subdirectory. The empty path (bucket root) maps to
+            // ".enc" itself, making is_empty() always false for encrypted clients —
+            // which is correct: the root listing must hit /tree/.enc, not /tree.
+            let path = if encrypted.is_empty() {
+                ENC_ROOT.to_string()
+            } else {
+                format!("{ENC_ROOT}/{encrypted}")
+            };
+            return Ok(RemotePath { path, encrypted: true });
         }
+
+        Ok(RemotePath {
+            path: joined,
+            #[cfg(feature = "encrypt")]
+            encrypted: false,
+        })
+    }
+
+    /// Decrypt the names in a listing back to plaintext bucket-absolute paths,
+    /// dropping any entry that doesn't decrypt. No-op when no cipher is set.
+    #[cfg(feature = "encrypt")]
+    fn decrypt_listing(&self, entries: &mut Vec<TreeEntry>) {
+        use crate::encryption::ENC_ROOT;
+
+        let Some(cipher) = &self.path_cipher else {
+            return;
+        };
+        // All stored paths now live under .enc/. Strip that prefix before
+        // decrypting; drop anything that doesn't match (defense in depth),
+        // including a bare `.enc` entry and lookalikes such as `.encrypted`.
+        entries.retain_mut(|e| {
+            let Some(stored) = e.path.strip_prefix(ENC_ROOT).and_then(|p| p.strip_prefix('/')) else {
+                return false;
+            };
+            match cipher.decrypt_path(stored) {
+                Some(plain) => {
+                    e.path = plain;
+                    true
+                }
+                None => false,
+            }
+        });
+    }
+
+    /// Attach a path cipher, turning this into an encrypting client. Called once
+    /// at setup on the freshly-built (uniquely-owned) client.
+    #[cfg(feature = "encrypt")]
+    pub fn with_path_cipher(
+        self: std::sync::Arc<Self>,
+        cipher: std::sync::Arc<crate::encryption::path::PathCipher>,
+    ) -> std::sync::Arc<Self> {
+        let mut this =
+            std::sync::Arc::try_unwrap(self).unwrap_or_else(|_| panic!("with_path_cipher: client already shared"));
+        this.path_cipher = Some(cipher);
+        std::sync::Arc::new(this)
     }
 
     /// Strip `path_prefix` from the beginning of `full`. Returns `None` if the
@@ -622,15 +738,41 @@ impl HubApiClient {
     /// Follows `Link` header pagination. For repos, includes `expand=true`
     /// to get per-file lastCommit (mtime). For buckets, passes `recursive=false`.
     pub async fn list_tree(&self, prefix: &str) -> Result<Vec<TreeEntry>> {
-        let api_prefix = self.prefixed_path(prefix);
-        let mut entries = match &self.source {
-            SourceKind::Bucket { bucket_id } => self.list_tree_bucket(bucket_id, &api_prefix).await?,
+        let api_prefix = self.prefixed_path(prefix)?;
+
+        // Capture the dispatch result so we can intercept 404 for encrypted root
+        // listings (the .enc/ directory doesn't exist until the first write).
+        let result: Result<Vec<TreeEntry>> = match &self.source {
+            SourceKind::Bucket { bucket_id } => self.list_tree_bucket(bucket_id, &api_prefix).await,
             SourceKind::Repo {
                 repo_id,
                 repo_type,
                 revision,
-            } => self.list_tree_repo(repo_id, *repo_type, revision, &api_prefix).await?,
+            } => self.list_tree_repo(repo_id, *repo_type, revision, &api_prefix).await,
         };
+
+        // On a fresh bucket/repo with encryption, .enc/ doesn't exist yet so the
+        // API returns 404. Map that to an empty listing — but only for the true
+        // bucket root (prefix == "") on a top-level mount (no path_prefix). A
+        // subfolder mount calling list_tree("") must still get its 404 propagated
+        // so validate_path_prefix can detect a missing subfolder.
+        #[cfg(feature = "encrypt")]
+        let result = match result {
+            Err(Error::Hub { status: Some(404), .. })
+                if self.path_cipher.is_some() && prefix.is_empty() && self.path_prefix.is_empty() =>
+            {
+                Ok(Vec::new())
+            }
+            other => other,
+        };
+
+        let mut entries = result?;
+
+        // Decrypt encrypted names back to plaintext bucket-absolute paths, dropping
+        // any entry that doesn't decrypt (this is what lets encrypted and plaintext
+        // objects coexist in one bucket).
+        #[cfg(feature = "encrypt")]
+        self.decrypt_listing(&mut entries);
 
         // Strip path prefix from returned entries and filter out the prefix dir itself.
         if !self.path_prefix.is_empty() {
@@ -648,7 +790,7 @@ impl HubApiClient {
         Ok(entries)
     }
 
-    async fn list_tree_bucket(&self, bucket_id: &str, prefix: &str) -> Result<Vec<TreeEntry>> {
+    async fn list_tree_bucket(&self, bucket_id: &str, prefix: &RemotePath) -> Result<Vec<TreeEntry>> {
         let mut all_entries = Vec::new();
         let recursive_param = "?recursive=false&limit=5000";
         let mut url = if prefix.is_empty() {
@@ -656,7 +798,9 @@ impl HubApiClient {
         } else {
             format!(
                 "{}/api/buckets/{}/tree/{}{recursive_param}",
-                self.endpoint, bucket_id, prefix
+                self.endpoint,
+                bucket_id,
+                prefix.as_url()
             )
         };
 
@@ -686,7 +830,7 @@ impl HubApiClient {
         repo_id: &str,
         repo_type: RepoType,
         revision: &str,
-        prefix: &str,
+        prefix: &RemotePath,
     ) -> Result<Vec<TreeEntry>> {
         let mut all_entries = Vec::new();
         let params = "?limit=1000";
@@ -705,7 +849,7 @@ impl HubApiClient {
                 repo_type.api_prefix(),
                 repo_id,
                 revision,
-                prefix,
+                prefix.as_url(),
             )
         };
 
@@ -750,11 +894,11 @@ impl HubApiClient {
     /// Fetch metadata for a single file via HEAD on the resolve endpoint.
     /// Returns `None` if 404 (file does not exist remotely).
     pub async fn head_file(&self, path: &str) -> Result<Option<HeadFileInfo>> {
-        let api_path = self.prefixed_path(path);
+        let api_path = self.prefixed_path(path)?;
         let url = match &self.source {
             // Buckets: /buckets/{id}/resolve/{path} (no /api/ prefix)
             SourceKind::Bucket { bucket_id } => {
-                format!("{}/buckets/{}/resolve/{}", self.endpoint, bucket_id, api_path)
+                format!("{}/buckets/{}/resolve/{}", self.endpoint, bucket_id, api_path.as_url())
             }
             // Repos: /{resolve_prefix}{id}/resolve/{revision}/{path}
             SourceKind::Repo {
@@ -768,7 +912,7 @@ impl HubApiClient {
                     repo_type.resolve_prefix(),
                     repo_id,
                     revision,
-                    api_path,
+                    api_path.as_url(),
                 )
             }
         };
@@ -861,30 +1005,28 @@ impl HubApiClient {
         };
         let url = format!("{}/api/buckets/{}/batch", self.endpoint, bucket_id);
 
-        // Build NDJSON body, prepending path_prefix to each op's path.
+        // Build the NDJSON body. Every path goes through `prefixed_path`, which
+        // joins the subfolder prefix and encrypts when a cipher is configured; the
+        // result is used raw (JSON-escaped, not URL-escaped).
         let mut body = String::new();
         for op in ops {
-            if self.path_prefix.is_empty() {
-                body.push_str(&serde_json::to_string(op)?);
-            } else {
-                let prefixed = match op {
-                    BatchOp::AddFile {
-                        path,
-                        xet_hash,
-                        mtime,
-                        content_type,
-                    } => BatchOp::AddFile {
-                        path: self.prefixed_path(path),
-                        xet_hash: xet_hash.clone(),
-                        mtime: *mtime,
-                        content_type: content_type.clone(),
-                    },
-                    BatchOp::DeleteFile { path } => BatchOp::DeleteFile {
-                        path: self.prefixed_path(path),
-                    },
-                };
-                body.push_str(&serde_json::to_string(&prefixed)?);
-            }
+            let transformed = match op {
+                BatchOp::AddFile {
+                    path,
+                    xet_hash,
+                    mtime,
+                    content_type,
+                } => BatchOp::AddFile {
+                    path: self.prefixed_path(path)?.as_body().to_string(),
+                    xet_hash: xet_hash.clone(),
+                    mtime: *mtime,
+                    content_type: content_type.clone(),
+                },
+                BatchOp::DeleteFile { path } => BatchOp::DeleteFile {
+                    path: self.prefixed_path(path)?.as_body().to_string(),
+                },
+            };
+            body.push_str(&serde_json::to_string(&transformed)?);
             body.push('\n');
         }
 
@@ -910,10 +1052,10 @@ impl HubApiClient {
     /// sidecar `{dest}.etag` file is present, sends `If-None-Match`. On 304 the
     /// existing cached file is kept as-is.
     pub async fn download_file_http(&self, path: &str, dest: &Path) -> Result<()> {
-        let api_path = self.prefixed_path(path);
+        let api_path = self.prefixed_path(path)?;
         let url = match &self.source {
             SourceKind::Bucket { bucket_id } => {
-                format!("{}/buckets/{}/resolve/{}", self.endpoint, bucket_id, api_path)
+                format!("{}/buckets/{}/resolve/{}", self.endpoint, bucket_id, api_path.as_url())
             }
             SourceKind::Repo {
                 repo_id,
@@ -926,7 +1068,7 @@ impl HubApiClient {
                     repo_type.resolve_prefix(),
                     repo_id,
                     revision,
-                    api_path,
+                    api_path.as_url(),
                 )
             }
         };
@@ -1305,23 +1447,195 @@ mod tests {
             },
             last_modified: UNIX_EPOCH,
             path_prefix: prefix.to_string(),
+            #[cfg(feature = "encrypt")]
+            path_cipher: None,
         }
     }
 
     #[test]
     fn test_prefixed_path_empty_prefix() {
         let c = make_test_client("", None);
-        assert_eq!(c.prefixed_path("file.txt"), "file.txt");
-        assert_eq!(c.prefixed_path("a/b"), "a/b");
-        assert_eq!(c.prefixed_path(""), "");
+        assert_eq!(c.prefixed_path("file.txt").unwrap().as_body(), "file.txt");
+        assert_eq!(c.prefixed_path("a/b").unwrap().as_body(), "a/b");
+        assert_eq!(c.prefixed_path("").unwrap().as_body(), "");
     }
 
     #[test]
     fn test_prefixed_path_with_prefix() {
         let c = make_test_client("sub/dir", None);
-        assert_eq!(c.prefixed_path("file.txt"), "sub/dir/file.txt");
-        assert_eq!(c.prefixed_path("a/b"), "sub/dir/a/b");
-        assert_eq!(c.prefixed_path(""), "sub/dir");
+        assert_eq!(c.prefixed_path("file.txt").unwrap().as_body(), "sub/dir/file.txt");
+        assert_eq!(c.prefixed_path("a/b").unwrap().as_body(), "sub/dir/a/b");
+        assert_eq!(c.prefixed_path("").unwrap().as_body(), "sub/dir");
+    }
+
+    #[test]
+    fn plaintext_paths_pass_through_url_unchanged() {
+        // A non-encrypted client must not alter or percent-encode paths.
+        let c = make_test_client("", None);
+        let rp = c.prefixed_path("a b?c.txt").unwrap();
+        assert_eq!(rp.as_body(), "a b?c.txt");
+        assert_eq!(rp.as_url(), "a b?c.txt");
+    }
+
+    #[cfg(feature = "encrypt")]
+    mod encryption_boundary {
+        use super::*;
+        use crate::encryption::ENC_ROOT;
+        use crate::encryption::path::PathCipher;
+        use std::sync::Arc;
+
+        fn encrypted_client(prefix: &str) -> HubApiClient {
+            let mut c = make_test_client(prefix, None);
+            c.path_cipher = Some(Arc::new(PathCipher::new([0x11u8; 16])));
+            c
+        }
+
+        /// Assert the stored path carries the `.enc/` wrapper and return what's
+        /// underneath it.
+        fn strip_enc_root(path: &str) -> &str {
+            path.strip_prefix(ENC_ROOT)
+                .and_then(|p| p.strip_prefix('/'))
+                .unwrap_or_else(|| panic!("stored path must start with {ENC_ROOT}/, got: {path}"))
+        }
+
+        /// An encrypted client pointed at a one-shot mock server returning 404,
+        /// for the list_tree 404→empty guard tests.
+        async fn encrypted_client_with_404_mock(prefix: &str) -> HubApiClient {
+            // The guard tests never inspect the request, and the mock server
+            // ignores send failures, so the capture receiver can be dropped.
+            let (mock_url, _rx) = capture_requests(vec![404]).await;
+            let mut c = make_test_client(prefix, None);
+            c.client = reqwest::Client::new();
+            c.endpoint = mock_url;
+            c.path_cipher = Some(Arc::new(PathCipher::new([0x11u8; 16])));
+            c
+        }
+
+        fn entry(path: &str) -> TreeEntry {
+            TreeEntry {
+                path: path.to_string(),
+                entry_type: "file".to_string(),
+                size: Some(10),
+                xet_hash: None,
+                oid: None,
+                mtime: None,
+            }
+        }
+
+        #[test]
+        fn outgoing_path_is_ciphertext_and_round_trips() {
+            let c = encrypted_client("");
+            let cipher = c.path_cipher.clone().unwrap();
+            let rp = c.prefixed_path("dir/super-secret.txt").unwrap();
+            // The JSON body form starts with .enc/ and is ciphertext — no plaintext leak.
+            assert!(!rp.as_body().contains("secret"));
+            assert!(!rp.as_body().contains("dir"));
+            // Strip the wrapper, then decrypt back to the bucket-absolute plaintext path.
+            let stored = strip_enc_root(rp.as_body());
+            assert_eq!(cipher.decrypt_path(stored), Some("dir/super-secret.txt".to_string()));
+        }
+
+        #[test]
+        fn prefix_is_encrypted_into_the_bucket_absolute_path() {
+            let c = encrypted_client("sub/dir");
+            let cipher = c.path_cipher.clone().unwrap();
+            let rp = c.prefixed_path("a.txt").unwrap();
+            let stored = strip_enc_root(rp.as_body());
+            assert_eq!(cipher.decrypt_path(stored), Some("sub/dir/a.txt".to_string()));
+        }
+
+        #[test]
+        fn empty_path_maps_to_enc_root() {
+            let c = encrypted_client("");
+            let rp = c.prefixed_path("").unwrap();
+            assert_eq!(rp.as_body(), ENC_ROOT);
+            assert!(!rp.is_empty());
+        }
+
+        #[test]
+        fn url_form_is_encoded_and_leak_free() {
+            let c = encrypted_client("");
+            let rp = c.prefixed_path("super-secret-config.json").unwrap();
+            let url = rp.as_url();
+            assert!(!url.contains("secret"));
+            // Only URL-safe bytes reach the request URL.
+            assert!(
+                url.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~' | b'/' | b'%')),
+                "url contains unescaped reserved characters: {url}"
+            );
+        }
+
+        #[test]
+        fn listing_decrypts_known_and_drops_the_rest() {
+            let c = encrypted_client("");
+            let cipher = c.path_cipher.clone().unwrap();
+            let encrypted = cipher.encrypt_path("dir/file.txt").unwrap();
+            let stored_path = format!("{ENC_ROOT}/{encrypted}");
+            let mut entries = vec![
+                entry(&stored_path),               // valid ciphertext under .enc → decrypted
+                entry(ENC_ROOT),                   // bare .enc directory → dropped (no trailing /)
+                entry("plaintext.txt"),            // plaintext at root → dropped
+                entry("AAAAAAAAAAAAAAAAAAAAAAAA"), // garbage outside .enc → dropped
+            ];
+            c.decrypt_listing(&mut entries);
+            let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
+            assert_eq!(paths, vec!["dir/file.txt"]);
+        }
+
+        #[test]
+        fn listing_drops_ciphertext_outside_enc() {
+            let c = encrypted_client("");
+            let cipher = c.path_cipher.clone().unwrap();
+            // A valid ciphertext component that lives outside .enc should be dropped.
+            let encrypted = cipher.encrypt_path("secret.txt").unwrap();
+            let mut entries = vec![
+                entry(&format!("{ENC_ROOT}/{encrypted}")), // inside .enc → kept
+                entry(&encrypted),                         // at root (outside .enc) → dropped
+            ];
+            c.decrypt_listing(&mut entries);
+            assert_eq!(entries.len(), 1);
+            assert_eq!(entries[0].path, "secret.txt");
+        }
+
+        #[test]
+        fn non_encrypted_client_omits_enc_prefix() {
+            let c = make_test_client("", None);
+            #[cfg(feature = "encrypt")]
+            assert!(c.path_cipher.is_none());
+            let rp = c.prefixed_path("file.txt").unwrap();
+            assert_eq!(rp.as_body(), "file.txt");
+
+            let rp_root = c.prefixed_path("").unwrap();
+            assert!(rp_root.is_empty());
+        }
+
+        // ── 404→empty listing tests (async, use mock HTTP) ─────────────
+
+        #[tokio::test]
+        async fn encrypted_client_404_on_root_becomes_empty() {
+            // .enc/ doesn't exist → API returns 404 for /tree/.enc, which the
+            // root listing maps to empty (all three guard legs true).
+            let c = encrypted_client_with_404_mock("").await;
+            let entries = c.list_tree("").await.unwrap();
+            assert!(entries.is_empty());
+        }
+
+        #[tokio::test]
+        async fn encrypted_client_404_on_subdir_still_errors() {
+            // A non-root prefix also gets a 404 → must NOT be mapped to empty.
+            let c = encrypted_client_with_404_mock("").await;
+            assert!(c.list_tree("some-dir").await.is_err());
+        }
+
+        #[tokio::test]
+        async fn encrypted_subfolder_mount_404_not_swallowed() {
+            // A subfolder mount calling list_tree("") must get its 404 propagated
+            // so validate_path_prefix can detect a missing subfolder: path_prefix
+            // is non-empty, so the 404 guard's third leg fails → error.
+            let c = encrypted_client_with_404_mock("sub/dir").await;
+            assert!(c.list_tree("").await.is_err());
+        }
     }
 
     #[test]
@@ -1523,6 +1837,108 @@ mod tests {
         });
 
         url
+    }
+
+    /// Like `mock_server`, but captures each full HTTP request (request line +
+    /// headers + body) and hands it back over a channel for assertions.
+    #[cfg(feature = "encrypt")]
+    async fn capture_requests(responses: Vec<u16>) -> (String, tokio::sync::mpsc::Receiver<Vec<u8>>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let url = format!("http://{addr}");
+        let (tx, rx) = tokio::sync::mpsc::channel(8);
+
+        tokio::spawn(async move {
+            for status in responses {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                // Read headers, then `Content-Length` bytes of body.
+                let mut data = Vec::new();
+                let mut buf = [0u8; 4096];
+                loop {
+                    let n = stream.read(&mut buf).await.unwrap_or(0);
+                    if n == 0 {
+                        break;
+                    }
+                    data.extend_from_slice(&buf[..n]);
+                    if let Some(pos) = data.windows(4).position(|w| w == b"\r\n\r\n") {
+                        let headers = String::from_utf8_lossy(&data[..pos]).to_lowercase();
+                        let content_length = headers
+                            .lines()
+                            .find_map(|l| l.strip_prefix("content-length:"))
+                            .and_then(|v| v.trim().parse::<usize>().ok())
+                            .unwrap_or(0);
+                        if data.len() >= pos + 4 + content_length {
+                            break;
+                        }
+                    }
+                }
+                let _ = tx.send(data).await;
+                let body = "[]";
+                let response = format!(
+                    "HTTP/1.1 {status} OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                stream.write_all(response.as_bytes()).await.ok();
+                stream.shutdown().await.ok();
+            }
+        });
+
+        (url, rx)
+    }
+
+    /// HTTP-level proof of the boundary: an encrypted GET URL carries `.enc/` +
+    /// percent-encoded ciphertext, while batch NDJSON carries the raw stored path
+    /// (`.enc/` + raw ciphertext) — and neither ever carries the plaintext.
+    #[cfg(feature = "encrypt")]
+    #[tokio::test]
+    async fn http_get_url_is_encoded_ciphertext_and_batch_body_is_raw() {
+        use crate::encryption::ENC_ROOT;
+        use crate::encryption::path::PathCipher;
+        use std::sync::Arc;
+
+        let cipher = Arc::new(PathCipher::new([0x11u8; 16]));
+        let encrypted = cipher.encrypt_path("secret-dir/secret.txt").unwrap();
+        let stored = format!("{ENC_ROOT}/{encrypted}");
+        // `.enc` is all URI-unreserved characters, so the encoded form keeps it
+        // verbatim: ".enc/" + percent-encoded ciphertext.
+        let url_form = crate::encryption::url::encode_path_segments(&stored);
+        assert!(url_form.starts_with(&format!("{ENC_ROOT}/")));
+
+        let (mock_url, mut rx) = capture_requests(vec![404, 200]).await;
+        let client = HubApiClient::new(&mock_url, Some("tok"), "user/bucket", "test").with_path_cipher(cipher);
+
+        // GET (head_file): the resolve URL path is `.enc/` + percent-encoded ciphertext.
+        let _ = client.head_file("secret-dir/secret.txt").await;
+        let req = String::from_utf8_lossy(&rx.recv().await.unwrap()).into_owned();
+        let request_line = req.lines().next().unwrap_or("");
+        assert!(
+            request_line.contains(&format!("/resolve/{url_form}")),
+            "GET URL must contain .enc/ + the percent-encoded ciphertext, got: {request_line}"
+        );
+        assert!(!req.contains("secret"), "no plaintext name in the request");
+
+        // POST (batch): NDJSON body carries the raw stored path, not URL-encoded.
+        client
+            .batch_operations(&[BatchOp::AddFile {
+                path: "secret-dir/secret.txt".to_string(),
+                xet_hash: "deadbeef".to_string(),
+                mtime: 0,
+                content_type: None,
+            }])
+            .await
+            .unwrap();
+        let req = String::from_utf8_lossy(&rx.recv().await.unwrap()).into_owned();
+        // The NDJSON body's `path` (JSON-decoded) starts with `.enc/`.
+        let json_line = req.split("\r\n\r\n").nth(1).unwrap_or("").lines().next().unwrap_or("");
+        let op: serde_json::Value = serde_json::from_str(json_line).expect("batch body is NDJSON");
+        assert_eq!(
+            op["path"].as_str().unwrap(),
+            stored,
+            "batch path must be the raw .enc/ + ciphertext"
+        );
+        assert!(!req.contains("secret"), "no plaintext name in the batch body");
     }
 
     #[tokio::test]

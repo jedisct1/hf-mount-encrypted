@@ -214,6 +214,16 @@ pub struct MountOptions {
     /// Writes are never pushed to remote.
     #[arg(long, default_value_t = false)]
     pub overlay: bool,
+
+    /// Path to a 32-byte master key (raw bytes or 64 hex characters). When set,
+    /// file contents and names are encrypted client-side. Requires building with
+    /// `--features encrypt`. Implies --advanced-writes.
+    #[arg(long)]
+    pub encryption_key_file: Option<PathBuf>,
+
+    /// Content encryption algorithm. Currently only `aegis-128x2` is supported.
+    #[arg(long, default_value = "aegis-128x2")]
+    pub encryption_algorithm: String,
 }
 
 /// CLI args for the foreground FUSE/NFS binaries.
@@ -369,6 +379,37 @@ pub fn build_with_runtime(
         .unwrap_or_else(|e| panic!("Failed to initialize Hub client: {e}"))
     });
 
+    // Build the encryptor (if a key file was given) and attach its path cipher to
+    // the Hub client now, while the client is still uniquely owned — before any
+    // clone (token refresher, VFS) takes a reference.
+    #[cfg(not(feature = "encrypt"))]
+    if options.encryption_key_file.is_some() {
+        panic!("--encryption-key-file requires building with --features encrypt");
+    }
+    #[cfg(feature = "encrypt")]
+    let encryption: Option<Arc<crate::encryption::Encryptor>> = options.encryption_key_file.as_ref().map(|path| {
+        let master = crate::encryption::MasterKey::from_file(path).unwrap_or_else(|e| panic!("encryption key: {e}"));
+        let algorithm = crate::encryption::algorithm_byte(&options.encryption_algorithm).unwrap_or_else(|| {
+            panic!(
+                "unsupported --encryption-algorithm '{}' (supported: aegis-128x2)",
+                options.encryption_algorithm
+            )
+        });
+        Arc::new(crate::encryption::Encryptor::from_master_key(&master, algorithm))
+    });
+    #[cfg(feature = "encrypt")]
+    let hub_client = match &encryption {
+        Some(enc) => hub_client.with_path_cipher(enc.path_cipher.clone()),
+        None => hub_client,
+    };
+    #[cfg(feature = "encrypt")]
+    if encryption.is_some() {
+        info!(
+            "Client-side encryption enabled (algorithm: {})",
+            options.encryption_algorithm
+        );
+    }
+
     // Validate that the subfolder exists on the remote.
     if !hub_client.path_prefix().is_empty() {
         runtime.block_on(async {
@@ -440,6 +481,10 @@ pub fn build_with_runtime(
     let xet_sessions = XetSessions::new(xet_ctx, download_session, upload_config, cached_client, xorb_cache);
 
     let advanced_writes = options.advanced_writes || options.overlay || (is_nfs && !read_only);
+    // Encryption needs random access to the ciphertext container, so it always
+    // uses the staging-file write path.
+    #[cfg(feature = "encrypt")]
+    let advanced_writes = advanced_writes || encryption.is_some();
 
     // Overlay: open a pre-mount fd to the mount point directory. The fd is
     // held by OverlayBacking so overlay-local filesystem ops can stay rooted
@@ -555,6 +600,8 @@ pub fn build_with_runtime(
             // only exist on the FUSE side, so force the limit off here.
             inode_soft_limit: if is_nfs { 0 } else { options.inode_soft_limit },
             lru_sweep_interval: std::time::Duration::from_millis(options.lru_sweep_interval_ms),
+            #[cfg(feature = "encrypt")]
+            encryption,
         },
     );
 
