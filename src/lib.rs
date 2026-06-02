@@ -1,3 +1,4 @@
+pub mod base91;
 pub mod cached_xet_client;
 #[cfg(unix)]
 pub mod daemon;
@@ -13,6 +14,8 @@ pub mod daemon {
         pub fn notify_ready(&mut self) {}
     }
 }
+#[cfg(feature = "encrypt")]
+pub mod encryption;
 pub mod error;
 pub mod file_cache;
 pub mod follow;
