@@ -7,6 +7,8 @@ use tracing::{debug, info, warn};
 
 use crate::error::Error;
 use crate::hub_api::HubOps;
+#[cfg(feature = "encrypt")]
+use crate::xet::XetOps;
 
 use super::inode::{self, InodeTable};
 use super::{InvalKind, Invalidator};
@@ -25,6 +27,7 @@ impl super::VirtualFs {
     /// and triggers 504s on large mounts (e.g. transformers/docs). It is also
     /// the main knob to throttle hf-mount's load on the Hub `/api` endpoint
     /// when many mounts share the same upstream (e.g. Spaces).
+    #[cfg_attr(feature = "encrypt", allow(clippy::too_many_arguments))]
     pub(super) async fn poll_remote_changes(
         hub_client: Arc<dyn HubOps>,
         inodes: Arc<RwLock<InodeTable>>,
@@ -32,6 +35,9 @@ impl super::VirtualFs {
         invalidator: Invalidator,
         interval: Duration,
         listing_concurrency: usize,
+        #[cfg(feature = "encrypt")] xet_sessions: Arc<dyn XetOps>,
+        #[cfg(feature = "encrypt")] encryption: Option<Arc<crate::encryption::Encryptor>>,
+        #[cfg(feature = "encrypt")] read_fetch_timeout: Duration,
     ) {
         // Exponent applied to `interval` when the Hub returns 401 (token expired
         // or revoked). Reset to 0 as soon as we see a successful round.
@@ -127,6 +133,62 @@ impl super::VirtualFs {
                 }
             }
             Self::apply_poll_diff(all_entries, &polled_prefixes, &inodes, &negative_cache, &invalidator);
+
+            // Encrypted files whose object changed kept their old plaintext size
+            // above; probe the new headers to repair the visible size. Done here
+            // (not in revalidate) so it works on every backend — NFS has no
+            // per-lookup revalidate to self-heal, and once poll updates the hash
+            // revalidate would see no change and never re-probe.
+            #[cfg(feature = "encrypt")]
+            if let Some(enc) = &encryption {
+                Self::repair_encrypted_sizes(&xet_sessions, enc, &inodes, listing_concurrency, read_fetch_timeout)
+                    .await;
+            }
+        }
+    }
+
+    /// Probe the headers of encrypted files flagged `needs_size_probe` and write
+    /// their plaintext size, clearing the flag. A failed probe leaves the flag set
+    /// so the next poll round retries.
+    #[cfg(feature = "encrypt")]
+    pub(super) async fn repair_encrypted_sizes(
+        xet_sessions: &Arc<dyn XetOps>,
+        encryptor: &crate::encryption::Encryptor,
+        inodes: &Arc<RwLock<InodeTable>>,
+        concurrency: usize,
+        read_fetch_timeout: Duration,
+    ) {
+        let pending = inodes.read().expect("inodes poisoned").pending_size_probes();
+        if pending.is_empty() {
+            return;
+        }
+        let probed: Vec<(u64, Option<u64>)> = stream::iter(pending.into_iter().map(|(ino, hash, cipher_size)| {
+            let xet = xet_sessions.clone();
+            async move {
+                let plaintext = super::VirtualFs::probe_plaintext_size_with(
+                    &*xet,
+                    encryptor,
+                    &hash,
+                    cipher_size,
+                    read_fetch_timeout,
+                )
+                .await;
+                (ino, plaintext)
+            }
+        }))
+        .buffer_unordered(concurrency.max(1))
+        .collect()
+        .await;
+
+        let mut table = inodes.write().expect("inodes poisoned");
+        for (ino, plaintext) in probed {
+            if let Some(pt) = plaintext
+                && let Some(e) = table.get_mut(ino)
+                && !e.is_dirty()
+            {
+                e.size = pt;
+                e.needs_size_probe = false;
+            }
         }
     }
 
@@ -164,11 +226,13 @@ impl super::VirtualFs {
             etag: Option<String>,
             size: u64,
             mtime: SystemTime,
+            cipher_size: Option<u64>,
+            needs_size_probe: bool,
         }
         let mut updates = Vec::new();
         let mut deletions = Vec::new();
 
-        for (ino, path, local_hash, local_etag, local_size, is_dirty) in &snapshot {
+        for (ino, path, local_hash, local_etag, local_size, is_dirty, local_cipher_size) in &snapshot {
             // Skip locally-modified files: local writes take precedence until flushed.
             if *is_dirty {
                 continue;
@@ -185,18 +249,36 @@ impl super::VirtualFs {
                         remote_oid != local_etag.as_deref()
                     };
 
-                    if changed || remote_size != *local_size {
+                    // `remote_size` is the object size; for encrypted files the
+                    // local object size is `cipher_size`, not the plaintext `size`.
+                    // Comparing against the object size avoids treating every
+                    // encrypted file as changed on every poll.
+                    let local_object_size = local_cipher_size.unwrap_or(*local_size);
+                    if changed || remote_size != local_object_size {
                         let mtime = remote
                             .mtime
                             .as_deref()
                             .map(crate::hub_api::mtime_from_str)
                             .unwrap_or(SystemTime::now());
+                        // For encrypted files we can't recover the new plaintext
+                        // size here (no header probe in the poll loop), so keep the
+                        // current plaintext `size` and refresh the ciphertext object
+                        // size — reads target the new object; stat may lag a content
+                        // change until the next header probe.
+                        let (size, cipher_size) = match local_cipher_size {
+                            Some(_) => (*local_size, Some(remote_size)),
+                            None => (remote_size, None),
+                        };
                         updates.push(Update {
                             ino: *ino,
                             hash: remote_hash.map(|s| s.to_string()),
                             etag: remote_oid.map(|s| s.to_string()),
-                            size: remote_size,
+                            size,
                             mtime,
+                            cipher_size,
+                            // Encrypted files kept the old plaintext size above; the
+                            // post-pass must probe the new object for the real size.
+                            needs_size_probe: local_cipher_size.is_some(),
                         });
                         info!("Remote update detected: {}", path);
                     }
@@ -225,13 +307,17 @@ impl super::VirtualFs {
             let mut inode_table = inodes.write().expect("inodes poisoned");
 
             for update in &updates {
-                inode_table.update_remote_file(
+                if inode_table.update_remote_file(
                     update.ino,
                     update.hash.clone(),
                     update.etag.clone(),
                     update.size,
                     update.mtime,
-                );
+                    update.cipher_size,
+                ) && let Some(e) = inode_table.get_mut(update.ino)
+                {
+                    e.needs_size_probe = update.needs_size_probe;
+                }
                 let kind = if inode_table.has_open_handles(update.ino) {
                     InvalKind::AttrOnly
                 } else {

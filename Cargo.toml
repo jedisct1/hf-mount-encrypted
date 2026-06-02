@@ -37,10 +37,20 @@ ulid = "1"
 uuid = { version = "1", features = ["v4"] }
 cap-std = "4"
 
+# Client-side encryption (feature = "encrypt"). Format-affecting crypto crates
+# are pinned exactly because the on-disk container format and the filename/key
+# derivation must stay reproducible across builds.
+aegis = { version = "=0.9.11", features = ["raf"], optional = true }
+ct-codecs = { version = "=1.1.6", optional = true }
+hctr2-rs = { version = "0.9.2", optional = true }
+hmac-sha256 = { version = "=1.1.14", optional = true }
+zeroize = { version = "1", features = ["derive"], optional = true }
+
 [features]
-default = []
+default = ["encrypt", "nfs"]
 fuse = ["dep:fuser"]
 nfs = ["dep:nfsserve"]
+encrypt = ["dep:aegis", "dep:ct-codecs", "dep:hctr2-rs", "dep:hmac-sha256", "dep:zeroize"]
 vendored-openssl = ["openssl-sys/vendored"]
 
 [dependencies.openssl-sys]
