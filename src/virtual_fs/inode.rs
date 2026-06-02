@@ -99,7 +99,18 @@ pub struct InodeEntry {
     /// Full path from the mount root.
     pub full_path: Arc<str>,
     pub kind: InodeKind,
+    /// Plaintext size — what `stat` reports. For encrypted files this is the
+    /// decrypted length, not the size of the remote object.
     pub size: u64,
+    /// For an encrypted file, the size of the remote ciphertext object (what the
+    /// CAS/Xet layer downloads). `None` for plaintext files and directories, in
+    /// which case `size` is also the object size. `size` is never derivable from
+    /// this (the RAF pads its last chunk), so the two are tracked independently.
+    pub cipher_size: Option<u64>,
+    /// Set when an encrypted file's object changed (poll refreshed `cipher_size`
+    /// and the hash but couldn't probe the new plaintext size in the poll loop).
+    /// The poll loop's post-pass probes these and clears the flag.
+    pub needs_size_probe: bool,
     pub mtime: SystemTime,
     pub mode: u16,
     pub uid: u32,
@@ -218,7 +229,14 @@ impl InodeEntry {
             // The on-disk staging file is the just-uploaded content — valid
             // cache for the next write-open.
             self.staging_is_current = true;
-            self.size = size;
+            // For an encrypted file `size` is the uploaded ciphertext object
+            // length; record it as `cipher_size` and keep the plaintext `size`
+            // that the local writes already set.
+            if self.cipher_size.is_some() {
+                self.cipher_size = Some(size);
+            } else {
+                self.size = size;
+            }
             self.pending_deletes.clear();
         }
         let now = SystemTime::now();
@@ -274,6 +292,8 @@ impl InodeTable {
             full_path: root_path.clone(),
             kind: InodeKind::Directory,
             size: 0,
+            cipher_size: None,
+            needs_size_probe: false,
             mtime: UNIX_EPOCH,
             mode: 0o755,
             uid: 0,
@@ -613,6 +633,8 @@ impl InodeTable {
             full_path: full_path_arc.clone(),
             kind,
             size,
+            cipher_size: None,
+            needs_size_probe: false,
             mtime,
             mode,
             uid,
@@ -676,7 +698,18 @@ impl InodeTable {
 
     /// Snapshot of all file entries: (ino, full_path, xet_hash, etag, size, is_dirty)
     #[allow(clippy::type_complexity)]
-    pub fn file_snapshot(&self) -> Vec<(u64, Arc<str>, Option<String>, Option<String>, u64, bool)> {
+    /// Encrypted files whose plaintext size needs a (re)probe: `(ino, xet_hash,
+    /// cipher_size)`. Used by the poll loop's post-pass to repair sizes.
+    pub fn pending_size_probes(&self) -> Vec<(u64, String, u64)> {
+        self.inodes
+            .values()
+            .filter(|e| e.needs_size_probe)
+            .filter_map(|e| Some((e.inode, e.xet_hash.clone()?, e.cipher_size?)))
+            .collect()
+    }
+
+    #[allow(clippy::type_complexity)]
+    pub fn file_snapshot(&self) -> Vec<(u64, Arc<str>, Option<String>, Option<String>, u64, bool, Option<u64>)> {
         self.inodes
             .values()
             .filter(|e| e.kind == InodeKind::File)
@@ -688,6 +721,7 @@ impl InodeTable {
                     e.etag.clone(),
                     e.size,
                     e.is_dirty(),
+                    e.cipher_size,
                 )
             })
             .collect()
@@ -701,6 +735,7 @@ impl InodeTable {
         new_etag: Option<String>,
         new_size: u64,
         new_mtime: SystemTime,
+        new_cipher_size: Option<u64>,
     ) -> bool {
         if let Some(entry) = self.inodes.get_mut(&ino) {
             if entry.is_dirty() {
@@ -709,6 +744,7 @@ impl InodeTable {
             entry.xet_hash = new_hash;
             entry.etag = new_etag;
             entry.size = new_size;
+            entry.cipher_size = new_cipher_size;
             entry.mtime = new_mtime;
             // Remote moved under us; the staging cache (if any) no longer
             // matches xet_hash. An in-flight download observes this under
@@ -1450,7 +1486,7 @@ mod tests {
         let new_mtime = UNIX_EPOCH + std::time::Duration::from_secs(1000);
 
         // Update succeeds on non-dirty file
-        assert!(table.update_remote_file(ino, Some("new_hash".to_string()), None, 200, new_mtime));
+        assert!(table.update_remote_file(ino, Some("new_hash".to_string()), None, 200, new_mtime, None));
         let entry = table.get(ino).unwrap();
         assert_eq!(entry.xet_hash, Some("new_hash".to_string()));
         assert_eq!(entry.size, 200);
@@ -1458,11 +1494,11 @@ mod tests {
 
         // Mark dirty — update should fail
         table.get_mut(ino).unwrap().set_dirty();
-        assert!(!table.update_remote_file(ino, Some("ignored".to_string()), None, 999, UNIX_EPOCH));
+        assert!(!table.update_remote_file(ino, Some("ignored".to_string()), None, 999, UNIX_EPOCH, None));
         assert_eq!(table.get(ino).unwrap().size, 200, "dirty file should not be updated");
 
         // Non-existent inode
-        assert!(!table.update_remote_file(9999, None, None, 0, UNIX_EPOCH));
+        assert!(!table.update_remote_file(9999, None, None, 0, UNIX_EPOCH, None));
     }
 
     #[test]
