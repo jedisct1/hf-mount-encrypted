@@ -133,6 +133,10 @@ pub struct VfsConfig {
     /// 0 disables the LRU evictor.
     pub inode_soft_limit: usize,
     pub lru_sweep_interval: Duration,
+    /// When set, file contents and names are encrypted. Consumed by the read,
+    /// write, and lookup paths.
+    #[cfg(feature = "encrypt")]
+    pub encryption: Option<std::sync::Arc<crate::encryption::Encryptor>>,
 }
 
 /// Lock ordering (acquire in this order to prevent deadlocks):
@@ -229,6 +233,17 @@ pub struct VirtualFs {
     filter_os_files: bool,
     /// When true, prefetch buffers drain after serving (forward-only, no re-read cache).
     direct_io: bool,
+    /// When set, file contents are encrypted: reads decrypt and the size split
+    /// (plaintext vs ciphertext object size) applies. Names are encrypted in the
+    /// Hub client; this handle carries the content key.
+    #[cfg(feature = "encrypt")]
+    encryption: Option<std::sync::Arc<crate::encryption::Encryptor>>,
+    /// Serializes per-op RAF access to encrypted staging files. RAF does
+    /// non-atomic read-modify-write, so concurrent ops on the same file would
+    /// corrupt it; a coarse lock is fine since encrypted writes are not the hot
+    /// path (reads dominate, and they don't touch staging).
+    #[cfg(feature = "encrypt")]
+    enc_io_lock: std::sync::Mutex<()>,
     /// Optional whole-file cache. When `Some`, opens hit the local copy if the
     /// xet hash is already populated; misses kick a background populate so the
     /// next open is fast. Mutually exclusive with xet-core's chunk cache.
@@ -297,6 +312,12 @@ impl VirtualFs {
                 bg_invalidator,
                 interval,
                 listing_concurrency,
+                #[cfg(feature = "encrypt")]
+                xet_sessions.clone(),
+                #[cfg(feature = "encrypt")]
+                config.encryption.clone(),
+                #[cfg(feature = "encrypt")]
+                config.read_fetch_timeout,
             )))
         } else {
             None
@@ -332,6 +353,10 @@ impl VirtualFs {
             serve_lookup_from_cache: config.serve_lookup_from_cache,
             filter_os_files: config.filter_os_files,
             direct_io: config.direct_io,
+            #[cfg(feature = "encrypt")]
+            encryption: config.encryption,
+            #[cfg(feature = "encrypt")]
+            enc_io_lock: std::sync::Mutex::new(()),
             file_cache,
         });
 
@@ -626,6 +651,27 @@ impl VirtualFs {
 
     // ── Helpers ─────────────────────────────────────────────────────────
 
+    /// Whether file contents and names are encrypted on this mount.
+    #[cfg(feature = "encrypt")]
+    pub fn is_encrypting(&self) -> bool {
+        self.encryption.is_some()
+    }
+
+    /// Reject a name that can't be encrypted within `NAME_MAX` (or contains NUL
+    /// or `/`) before any local state is mutated. No-op on plaintext mounts.
+    #[cfg(feature = "encrypt")]
+    fn check_encrypted_name(&self, name: &str) -> VirtualFsResult<()> {
+        use crate::encryption::path::PathError;
+        if let Some(enc) = self.encryption.as_ref() {
+            match enc.path_cipher.check_name_len(name) {
+                Ok(()) => {}
+                Err(PathError::NameTooLong) => return Err(libc::ENAMETOOLONG),
+                Err(PathError::InvalidName) => return Err(libc::EINVAL),
+            }
+        }
+        Ok(())
+    }
+
     fn make_vfs_attr(&self, entry: &InodeEntry) -> VirtualFsAttr {
         let perm = if self.read_only {
             match entry.kind {
@@ -716,8 +762,12 @@ impl VirtualFs {
                 } else {
                     remote_etag != current_etag
                 };
-                let mut inodes = self.inode_table.write().expect("inodes poisoned");
-                if changed {
+
+                // Resolve the new (plaintext, ciphertext) sizes off-lock. For an
+                // encrypted file the HEAD size is the ciphertext object size, so
+                // probe its header for the plaintext size; on probe failure keep
+                // the cached state and retry on the next access.
+                let sizes: Option<(u64, Option<u64>)> = if changed {
                     let remote_size = match head_info.size {
                         Some(s) => s,
                         None => {
@@ -725,6 +775,31 @@ impl VirtualFs {
                             return;
                         }
                     };
+                    #[cfg(feature = "encrypt")]
+                    let resolved = if self.is_encrypting() {
+                        match self
+                            .probe_remote_plaintext_size(remote_hash.unwrap_or(""), remote_size)
+                            .await
+                        {
+                            Some(plaintext) => (plaintext, Some(remote_size)),
+                            None => {
+                                warn!("revalidate: header probe failed for {}, keeping cached", full_path);
+                                return;
+                            }
+                        }
+                    } else {
+                        (remote_size, None)
+                    };
+                    #[cfg(not(feature = "encrypt"))]
+                    let resolved = (remote_size, None);
+                    Some(resolved)
+                } else {
+                    None
+                };
+
+                let mut inodes = self.inode_table.write().expect("inodes poisoned");
+                if changed {
+                    let (visible_size, cipher_size) = sizes.expect("changed implies sizes resolved");
                     let remote_mtime = head_info
                         .last_modified
                         .as_deref()
@@ -735,8 +810,9 @@ impl VirtualFs {
                         ino,
                         remote_hash.map(|s| s.to_string()),
                         remote_etag.map(|s| s.to_string()),
-                        remote_size,
+                        visible_size,
                         remote_mtime,
+                        cipher_size,
                     );
                     let kind = if inodes.has_open_handles(ino) {
                         InvalKind::AttrOnly
@@ -812,6 +888,16 @@ impl VirtualFs {
             }
         };
 
+        // For encrypted mounts, probe each direct-child file's header (off-lock,
+        // bounded concurrency) so we insert the plaintext size, never the
+        // ciphertext object size. Files whose header doesn't probe are dropped.
+        #[cfg(feature = "encrypt")]
+        let plaintext_sizes: HashMap<String, u64> = if self.is_encrypting() {
+            self.probe_listing_plaintext_sizes(&entries, &prefix).await
+        } else {
+            HashMap::new()
+        };
+
         let mut inodes = self.inode_table.write().expect("inodes poisoned");
         match inodes.get(parent_ino) {
             Some(e) if e.children_loaded() => return Ok(()),
@@ -872,6 +958,24 @@ impl VirtualFs {
                     .unwrap_or_else(|| self.hub_client.default_mtime());
                 let default_mode = if kind == InodeKind::Directory { 0o755 } else { 0o644 };
 
+                // Encrypted files: insert the probed plaintext size and remember
+                // the ciphertext object size separately; drop a file whose header
+                // didn't probe (unencrypted/invalid → not part of the view).
+                #[cfg(feature = "encrypt")]
+                let mut enc_cipher_size: Option<u64> = None;
+                #[cfg(feature = "encrypt")]
+                let size = if self.is_encrypting() && kind == InodeKind::File {
+                    match entry.xet_hash.as_deref().and_then(|h| plaintext_sizes.get(h)) {
+                        Some(&plaintext) => {
+                            enc_cipher_size = Some(size);
+                            plaintext
+                        }
+                        None => continue,
+                    }
+                } else {
+                    size
+                };
+
                 let ino = inodes.insert(
                     parent_ino,
                     rel_path.to_string(),
@@ -884,6 +988,12 @@ impl VirtualFs {
                     self.uid,
                     self.gid,
                 );
+                #[cfg(feature = "encrypt")]
+                if let Some(cs) = enc_cipher_size
+                    && let Some(e) = inodes.get_mut(ino)
+                {
+                    e.cipher_size = Some(cs);
+                }
                 let rel_name = rel_path.to_string();
                 seen_names.insert(rel_name);
                 if let Some(oid) = entry.oid
@@ -1159,6 +1269,33 @@ impl VirtualFs {
         }
     }
 
+    /// Open a dirty encrypted staging file read-only. The staging container
+    /// holds ciphertext, so the handle is tagged `encrypted` to route reads
+    /// through the RAF decrypt adapter rather than a raw `pread`.
+    #[cfg(feature = "encrypt")]
+    fn open_local_readonly_encrypted(&self, ino: u64, path: &PathBuf) -> VirtualFsResult<u64> {
+        let file = File::open(path).map_err(|e| {
+            error!("Failed to open encrypted staging file {:?}: {}", path, e);
+            libc::EIO
+        })?;
+        let file_handle = self.alloc_file_handle();
+        {
+            let inodes = self.inode_table.read().expect("inodes poisoned");
+            inodes.bump_open_handles(ino);
+            inodes.touch(ino);
+        }
+        self.open_files.write().expect("open_files poisoned").insert(
+            file_handle,
+            OpenFile::Local {
+                ino,
+                file: Arc::new(file),
+                writable: false,
+                encrypted: true,
+            },
+        );
+        Ok(file_handle)
+    }
+
     /// Register an already-opened `File` as a read-only `OpenFile::Local`
     /// handle. Used by the file_cache fast-path so the read fd stays alive
     /// even if eviction unlinks the on-disk copy after the open.
@@ -1169,10 +1306,16 @@ impl VirtualFs {
             inodes.bump_open_handles(ino);
             inodes.touch(ino);
         }
-        self.open_files
-            .write()
-            .expect("open_files poisoned")
-            .insert(file_handle, OpenFile::Local { ino, file, writable });
+        self.open_files.write().expect("open_files poisoned").insert(
+            file_handle,
+            OpenFile::Local {
+                ino,
+                file,
+                writable,
+                #[cfg(feature = "encrypt")]
+                encrypted: false,
+            },
+        );
         Ok(file_handle)
     }
 
@@ -1367,7 +1510,7 @@ impl VirtualFs {
                 if let Ok(Some(head)) = self.hub_client.head_file(&full_path).await
                     && head.size.is_some()
                 {
-                    return self.insert_file_from_head(parent, name, &full_path, head);
+                    return self.insert_file_from_head(parent, name, &full_path, head).await;
                 }
                 // The resolve endpoint returns 404 for directories, so a HEAD
                 // miss could still be a remotely-added dir. Targeted listing
@@ -1416,7 +1559,7 @@ impl VirtualFs {
             // and expose a zero-byte file. Fall back to list_tree which has
             // the authoritative size from the tree index.
             Ok(Some(head)) if head.size.is_some() => {
-                return self.insert_file_from_head(parent, name, &full_path, head);
+                return self.insert_file_from_head(parent, name, &full_path, head).await;
             }
             // 404 may mean "doesn't exist" or "it's a directory" (the resolve
             // endpoint only handles files), so the listing has the final word.
@@ -1441,7 +1584,7 @@ impl VirtualFs {
     /// Used by the lookup slow path to avoid listing the whole parent dir
     /// when only one file is needed. The parent's `children_loaded` stays
     /// `false` so a later `readdir` still triggers a full listing.
-    fn insert_file_from_head(
+    async fn insert_file_from_head(
         &self,
         parent: u64,
         name: &str,
@@ -1449,6 +1592,23 @@ impl VirtualFs {
         head: crate::hub_api::HeadFileInfo,
     ) -> VirtualFsResult<VirtualFsAttr> {
         let size = head.size.unwrap_or(0);
+        #[cfg(feature = "encrypt")]
+        let mut cipher_size: Option<u64> = None;
+        #[cfg(feature = "encrypt")]
+        let size = if self.is_encrypting() {
+            let Some(hash) = head.xet_hash.as_deref() else {
+                return Err(libc::ENOENT);
+            };
+            match self.probe_remote_plaintext_size(hash, size).await {
+                Some(plaintext) => {
+                    cipher_size = Some(size);
+                    plaintext
+                }
+                None => return Err(libc::ENOENT),
+            }
+        } else {
+            size
+        };
         let mtime = head
             .last_modified
             .as_deref()
@@ -1494,6 +1654,12 @@ impl VirtualFs {
             && let Some(entry) = inodes.get_mut(ino)
         {
             entry.etag = Some(etag);
+        }
+        #[cfg(feature = "encrypt")]
+        if let Some(cs) = cipher_size
+            && let Some(entry) = inodes.get_mut(ino)
+        {
+            entry.cipher_size = Some(cs);
         }
         match inodes.get(ino) {
             Some(entry) => Ok(self.make_vfs_attr(entry)),
@@ -1729,6 +1895,14 @@ impl VirtualFs {
         size: u64,
         truncate: bool,
     ) -> VirtualFsResult<u64> {
+        // Encrypted files use a ciphertext staging container and RAF reads/writes,
+        // so they take a dedicated path (downloads with `cipher_size`, installs an
+        // encrypted handle). Plaintext files fall through to the logic below.
+        #[cfg(feature = "encrypt")]
+        if self.is_encrypting() {
+            return self.open_advanced_write_encrypted(ino, full_path, truncate).await;
+        }
+
         // Serialize staging preparation per inode (prevents concurrent download races)
         let staging_mutex = self.staging.lock(ino);
         let _staging_guard = staging_mutex.lock().await;
@@ -1914,7 +2088,13 @@ impl VirtualFs {
         };
         match (fe.is_dirty, &staging_path) {
             // Advanced write in progress — read from local staging file.
-            (true, Some(path)) if path.exists() => self.open_local_readonly(ino, path),
+            (true, Some(path)) if path.exists() => {
+                #[cfg(feature = "encrypt")]
+                if self.is_encrypting() {
+                    return self.open_local_readonly_encrypted(ino, path);
+                }
+                self.open_local_readonly(ino, path)
+            }
 
             // Dirty file but staging file is missing — should not happen.
             (true, Some(_)) => {
@@ -1935,6 +2115,15 @@ impl VirtualFs {
             // Remote xet-backed file — try the whole-file cache first, then
             // fall back to lazy CAS range reads.
             _ if !fe.xet_hash.is_empty() => {
+                // Encrypted files decrypt via the RAF adapter over ranged CAS
+                // reads. Skip the whole-file/HTTP caches (they hold ciphertext)
+                // and read against the ciphertext object size, never the
+                // plaintext size.
+                #[cfg(feature = "encrypt")]
+                if self.is_encrypting() {
+                    let cipher_size = fe.cipher_size.unwrap_or(fe.size);
+                    return self.open_lazy_encrypted(ino, fe.xet_hash, cipher_size);
+                }
                 if let Some(fc) = &self.file_cache {
                     if let Some(file) = fc.try_open(&fe.xet_hash).await {
                         return self.install_local_handle(ino, file, false);
@@ -1995,11 +2184,505 @@ impl VirtualFs {
         )));
         let file_handle = self.alloc_file_handle();
         self.inode_table.read().expect("inodes poisoned").bump_open_handles(ino);
+        self.open_files.write().expect("open_files poisoned").insert(
+            file_handle,
+            OpenFile::Lazy {
+                ino,
+                prefetch,
+                #[cfg(feature = "encrypt")]
+                enc: None,
+            },
+        );
+        Ok(file_handle)
+    }
+
+    /// Allocate a lazy handle for a remote *encrypted* file. Reads decrypt the
+    /// ciphertext object (`cipher_size` bytes under `xet_hash`) on demand.
+    #[cfg(feature = "encrypt")]
+    fn open_lazy_encrypted(&self, ino: u64, xet_hash: String, cipher_size: u64) -> VirtualFsResult<u64> {
+        let prefetch = Arc::new(tokio::sync::Mutex::new(PrefetchState::new(
+            xet_hash.clone(),
+            cipher_size,
+            self.direct_io,
+        )));
+        let enc = Some(Arc::new(EncReadState {
+            xet_hash,
+            cipher_size,
+            header: tokio::sync::Mutex::new(None),
+        }));
+        let file_handle = self.alloc_file_handle();
+        self.inode_table.read().expect("inodes poisoned").bump_open_handles(ino);
         self.open_files
             .write()
             .expect("open_files poisoned")
-            .insert(file_handle, OpenFile::Lazy { ino, prefetch });
+            .insert(file_handle, OpenFile::Lazy { ino, prefetch, enc });
         Ok(file_handle)
+    }
+
+    /// Fetch a byte range of a remote object into memory, with the same 3-attempt
+    /// retry the plain read path uses (so a transient CAS/range failure isn't
+    /// mistaken for a permanent one). Takes the xet layer explicitly so the static
+    /// poll loop can call it too.
+    #[cfg(feature = "encrypt")]
+    async fn fetch_object_range_with(
+        xet: &dyn XetOps,
+        file_info: &XetFileInfo,
+        start: u64,
+        end: u64,
+        read_fetch_timeout: Duration,
+    ) -> VirtualFsResult<Vec<u8>> {
+        const MAX_ATTEMPTS: u32 = 3;
+        for attempt in 0..MAX_ATTEMPTS {
+            let result: std::result::Result<Vec<u8>, crate::error::Error> = async {
+                let mut stream = xet.download_stream_boxed(file_info, start, Some(end))?;
+                let mut buf = Vec::with_capacity((end - start) as usize);
+                loop {
+                    // Bound each chunk read for the same reason the plain read
+                    // path does: a stalled CAS/CDN connection would otherwise
+                    // park the worker thread in an unbounded `next()` forever.
+                    // Dropping `stream` on the way out cancels the request.
+                    let chunk = match read_fetch_timeout {
+                        Duration::ZERO => stream.next().await?,
+                        timeout => tokio::time::timeout(timeout, stream.next())
+                            .await
+                            .map_err(|_| crate::error::Error::hub(format!("stream read timed out after {timeout:?}")))??,
+                    };
+                    match chunk {
+                        Some(chunk) => buf.extend_from_slice(&chunk),
+                        None => break,
+                    }
+                }
+                Ok(buf)
+            }
+            .await;
+            match result {
+                Ok(buf) => return Ok(buf),
+                Err(e) => warn!(
+                    "encrypted fetch [{}, {}) of {} failed (attempt {}/{}): {}",
+                    start,
+                    end,
+                    file_info.hash(),
+                    attempt + 1,
+                    MAX_ATTEMPTS,
+                    e
+                ),
+            }
+        }
+        Err(libc::EIO)
+    }
+
+    #[cfg(feature = "encrypt")]
+    async fn fetch_object_range(
+        &self,
+        xet_hash: &str,
+        cipher_size: u64,
+        start: u64,
+        end: u64,
+    ) -> VirtualFsResult<Vec<u8>> {
+        let file_info = XetFileInfo::new(xet_hash.to_string(), cipher_size);
+        Self::fetch_object_range_with(&*self.xet_sessions, &file_info, start, end, self.read_fetch_timeout).await
+    }
+
+    /// Decrypt a plaintext read of an encrypted remote file. Fetches only the
+    /// covering ciphertext chunk slots (plus the cached header) and decrypts via
+    /// the RAF adapter.
+    #[cfg(feature = "encrypt")]
+    async fn encrypted_read(&self, state: &EncReadState, offset: u64, size: u32) -> VirtualFsResult<(Bytes, bool)> {
+        let encryptor = self.encryption.as_ref().ok_or(libc::EIO)?;
+        let plan = crate::encryption::content::plan_read(state.cipher_size, offset, size as u64).ok_or_else(|| {
+            error!("encrypted read: invalid container size {}", state.cipher_size);
+            libc::EIO
+        })?;
+
+        // The RAF header is fetched once per handle and reused across reads.
+        let header = {
+            let mut cached = state.header.lock().await;
+            match cached.as_ref() {
+                Some(header) => header.clone(),
+                None => {
+                    let fetched = self
+                        .fetch_object_range(
+                            &state.xet_hash,
+                            state.cipher_size,
+                            plan.header_object.start,
+                            plan.header_object.end,
+                        )
+                        .await?;
+                    *cached = Some(fetched.clone());
+                    fetched
+                }
+            }
+        };
+
+        let slots = if plan.slots_object.start < plan.slots_object.end {
+            self.fetch_object_range(
+                &state.xet_hash,
+                state.cipher_size,
+                plan.slots_object.start,
+                plan.slots_object.end,
+            )
+            .await?
+        } else {
+            Vec::new()
+        };
+
+        let io = crate::encryption::content::ReadIo::new(plan.raf_size, header, plan.slot_base_raf, slots);
+        let mut out = vec![0u8; size as usize];
+        let n =
+            crate::encryption::content::decrypt_read(&encryptor.content_key, io, offset, &mut out).map_err(|e| {
+                error!("encrypted read: decrypt failed: {}", e);
+                libc::EIO
+            })?;
+        out.truncate(n);
+        let eof = (n as u32) < size;
+        Ok((Bytes::from(out), eof))
+    }
+
+    /// Probe a remote encrypted file's header to recover its plaintext size.
+    /// Returns `None` if the header can't be fetched or isn't a valid container
+    /// (so the caller drops the entry rather than expose a ciphertext size).
+    /// Probe and fully validate a remote encrypted file's header, returning its
+    /// plaintext size or `None` if it isn't a valid container for this mount.
+    /// Takes the xet layer and encryptor explicitly so the static poll loop can
+    /// call it too.
+    #[cfg(feature = "encrypt")]
+    async fn probe_plaintext_size_with(
+        xet: &dyn XetOps,
+        encryptor: &crate::encryption::Encryptor,
+        xet_hash: &str,
+        cipher_size: u64,
+        read_fetch_timeout: Duration,
+    ) -> Option<u64> {
+        use crate::encryption::content;
+        let file_info = XetFileInfo::new(xet_hash.to_string(), cipher_size);
+        // Fetch the full object header (HFEB prefix + RAF header) and validate it
+        // end to end before trusting the file as encrypted content.
+        let header = Self::fetch_object_range_with(xet, &file_info, 0, content::CONTAINER_HEADER_LEN, read_fetch_timeout)
+            .await
+            .ok()?;
+        if header.len() < content::CONTAINER_HEADER_LEN as usize {
+            return None;
+        }
+        // HFEB magic + version, and the algorithm must match this mount.
+        let algorithm = content::parse_header(&header[..content::HFEB_HEADER_LEN]).ok()?;
+        if algorithm != encryptor.algorithm {
+            return None;
+        }
+        // Plaintext size from the RAF header, cross-checked against the object size.
+        let plaintext = content::probe_plaintext_size(&header[content::HFEB_HEADER_LEN..], cipher_size)?;
+        (content::ciphertext_size(plaintext) == cipher_size).then_some(plaintext)
+    }
+
+    #[cfg(feature = "encrypt")]
+    async fn probe_remote_plaintext_size(&self, xet_hash: &str, cipher_size: u64) -> Option<u64> {
+        let encryptor = self.encryption.as_ref()?;
+        Self::probe_plaintext_size_with(&*self.xet_sessions, encryptor, xet_hash, cipher_size, self.read_fetch_timeout)
+            .await
+    }
+
+    /// Initialize a new file's staging file as an empty ciphertext container and
+    /// install an encrypted local handle. Returns `Ok(None)` when not encrypting.
+    #[cfg(feature = "encrypt")]
+    fn create_encrypted(&self, ino: u64, full_path: &str, mode: u16) -> VirtualFsResult<Option<(VirtualFsAttr, u64)>> {
+        use crate::encryption::content;
+        let Some(encryptor) = self.encryption.as_ref() else {
+            return Ok(None);
+        };
+        let sd = self.staging.dir().ok_or(libc::EIO)?;
+        let path = sd.path(ino);
+        {
+            let _guard = self.enc_io_lock.lock().expect("enc_io_lock poisoned");
+            content::create_staging_container(&path, &encryptor.content_key).map_err(|e| {
+                error!("create encrypted staging container for {}: {}", full_path, e);
+                libc::EIO
+            })?;
+        }
+        if let Err(e) = self.set_local_backing_mode(full_path, mode) {
+            error!("Failed to set local backing mode for {}: {}", full_path, e);
+            self.inode_table.write().expect("inodes poisoned").remove(ino);
+            return Err(libc::EIO);
+        }
+        let file = sd.open_local_file(ino, true, true, false, false).map_err(|e| {
+            error!("open encrypted staging file for {}: {}", full_path, e);
+            libc::EIO
+        })?;
+        let file_handle = self.alloc_file_handle();
+        let attr = {
+            let mut inodes = self.inode_table.write().expect("inodes poisoned");
+            if let Some(entry) = inodes.get_mut(ino) {
+                // Mark encrypted (so apply_commit routes the uploaded length to
+                // cipher_size). The empty container is `ciphertext_size(0)` bytes.
+                entry.cipher_size = Some(content::ciphertext_size(0));
+            }
+            inodes.bump_open_handles(ino);
+            self.make_vfs_attr(inodes.get(ino).ok_or(libc::ENOENT)?)
+        };
+        self.open_files.write().expect("open_files poisoned").insert(
+            file_handle,
+            OpenFile::Local {
+                ino,
+                file: Arc::new(file),
+                writable: true,
+                encrypted: true,
+            },
+        );
+        Ok(Some((attr, file_handle)))
+    }
+
+    /// Write into the encrypted staging container via the RAF adapter (never raw
+    /// `pwrite`). Serialized per `enc_io_lock`.
+    #[cfg(feature = "encrypt")]
+    fn encrypted_local_write(&self, ino: u64, offset: u64, data: &[u8]) -> VirtualFsResult<u32> {
+        use crate::encryption::content;
+        let encryptor = self.encryption.as_ref().ok_or(libc::EIO)?;
+        let sd = self.staging.dir().ok_or(libc::EIO)?;
+        let path = sd.path(ino);
+        let old_plaintext = self
+            .inode_table
+            .read()
+            .expect("inodes poisoned")
+            .get(ino)
+            .map(|e| e.size)
+            .unwrap_or(0);
+
+        let (written, new_plaintext) = {
+            let _guard = self.enc_io_lock.lock().expect("enc_io_lock poisoned");
+            let mut raf = content::open_staging_raf(&path, &encryptor.content_key).map_err(|e| {
+                error!("open staging raf for write ino={}: {}", ino, e);
+                libc::EIO
+            })?;
+            let n = raf.write(data, offset).map_err(|e| {
+                error!("raf write ino={}: {}", ino, e);
+                libc::EIO
+            })?;
+            raf.sync().map_err(|e| {
+                error!("raf sync ino={}: {}", ino, e);
+                libc::EIO
+            })?;
+            (n as u32, raf.size())
+        };
+
+        let mut inodes = self.inode_table.write().expect("inodes poisoned");
+        if let Some(entry) = inodes.get_mut(ino) {
+            if new_plaintext != entry.size {
+                sd.resize_bytes(
+                    content::ciphertext_size(old_plaintext),
+                    content::ciphertext_size(new_plaintext),
+                );
+                entry.size = new_plaintext;
+            }
+            entry.set_dirty();
+        }
+        inodes.touch(ino);
+        Ok(written)
+    }
+
+    /// Read from the encrypted staging container via the RAF adapter (decrypts).
+    #[cfg(feature = "encrypt")]
+    fn encrypted_local_read(&self, ino: u64, offset: u64, size: u32) -> VirtualFsResult<(Bytes, bool)> {
+        use crate::encryption::content;
+        let encryptor = self.encryption.as_ref().ok_or(libc::EIO)?;
+        let sd = self.staging.dir().ok_or(libc::EIO)?;
+        let path = sd.path(ino);
+        let _guard = self.enc_io_lock.lock().expect("enc_io_lock poisoned");
+        let mut raf = content::open_staging_raf(&path, &encryptor.content_key).map_err(|e| {
+            error!("open staging raf for read ino={}: {}", ino, e);
+            libc::EIO
+        })?;
+        let mut buf = vec![0u8; size as usize];
+        let n = raf.read(&mut buf, offset).map_err(|e| {
+            error!("raf read ino={}: {}", ino, e);
+            libc::EIO
+        })?;
+        buf.truncate(n);
+        let eof = (n as u32) < size;
+        Ok((Bytes::from(buf), eof))
+    }
+
+    /// Ensure an encrypted file's staging container is present on disk. Reuses a
+    /// dirty/current staging file; otherwise downloads the remote ciphertext
+    /// object (using `cipher_size`, never the plaintext size) or, for a fresh
+    /// container, writes an empty one. Caller holds the per-inode staging lock.
+    #[cfg(feature = "encrypt")]
+    async fn ensure_encrypted_staging(&self, ino: u64, force_fresh: bool) -> VirtualFsResult<()> {
+        use crate::encryption::content;
+        let encryptor = self.encryption.as_ref().ok_or(libc::EIO)?;
+        let sd = self.staging.dir().ok_or(libc::EOPNOTSUPP)?;
+        let path = sd.path(ino);
+        let (is_dirty, staging_is_current, xet_hash, cipher_size) = {
+            let inodes = self.inode_table.read().expect("inodes poisoned");
+            let e = inodes.get(ino).ok_or(libc::ENOENT)?;
+            (
+                e.is_dirty(),
+                e.staging_is_current,
+                e.xet_hash.clone().unwrap_or_default(),
+                e.cipher_size.unwrap_or(0),
+            )
+        };
+        if !force_fresh && path.exists() && (is_dirty || staging_is_current) {
+            return Ok(());
+        }
+        let old = sd.file_size(ino);
+        if force_fresh || xet_hash.is_empty() || cipher_size == 0 {
+            let _io = self.enc_io_lock.lock().expect("enc_io_lock poisoned");
+            content::create_staging_container(&path, &encryptor.content_key).map_err(|e| {
+                error!("create encrypted staging container ino={}: {}", ino, e);
+                libc::EIO
+            })?;
+        } else {
+            self.xet_sessions
+                .download_to_file(&xet_hash, cipher_size, &path)
+                .await
+                .map_err(|e| {
+                    error!("download encrypted object for write ino={}: {}", ino, e);
+                    libc::EIO
+                })?;
+            if let Some(e) = self.inode_table.write().expect("inodes poisoned").get_mut(ino) {
+                e.staging_is_current = true;
+            }
+        }
+        sd.resize_bytes(old, sd.file_size(ino));
+        Ok(())
+    }
+
+    /// Open an existing (or freshly-created) encrypted file for write: prepare the
+    /// ciphertext staging container and install an encrypted handle so all
+    /// reads/writes go through the RAF adapter.
+    #[cfg(feature = "encrypt")]
+    async fn open_advanced_write_encrypted(&self, ino: u64, full_path: &str, truncate: bool) -> VirtualFsResult<u64> {
+        use crate::encryption::content;
+        if self.staging.dir().is_none() {
+            // Overlay + encryption is not supported.
+            return Err(libc::EOPNOTSUPP);
+        }
+        let staging_mutex = self.staging.lock(ino);
+        let _staging_guard = staging_mutex.lock().await;
+
+        // O_TRUNC discards content: start from a fresh empty container.
+        self.ensure_encrypted_staging(ino, truncate).await?;
+
+        let sd = self.staging.dir().ok_or(libc::EIO)?;
+        let file = sd.open_local_file(ino, true, true, false, false).map_err(|e| {
+            error!("open encrypted staging file for write {}: {}", full_path, e);
+            libc::EIO
+        })?;
+
+        {
+            let mut inodes = self.inode_table.write().expect("inodes poisoned");
+            let entry = inodes.get_mut(ino).ok_or(libc::ENOENT)?;
+            entry.set_dirty();
+            if truncate {
+                entry.size = 0;
+                entry.cipher_size = Some(content::ciphertext_size(0));
+                let now = SystemTime::now();
+                entry.mtime = now;
+                entry.ctime = now;
+            }
+        }
+
+        let file_handle = self.alloc_file_handle();
+        self.inode_table.read().expect("inodes poisoned").bump_open_handles(ino);
+        self.open_files.write().expect("open_files poisoned").insert(
+            file_handle,
+            OpenFile::Local {
+                ino,
+                file: Arc::new(file),
+                writable: true,
+                encrypted: true,
+            },
+        );
+        Ok(file_handle)
+    }
+
+    /// Truncate an encrypted file via the RAF adapter (never raw `set_len`), used
+    /// by `setattr(size)`.
+    #[cfg(feature = "encrypt")]
+    async fn encrypted_setattr_truncate(&self, ino: u64, new_size: u64) -> VirtualFsResult<()> {
+        use crate::encryption::content;
+        let encryptor = self.encryption.as_ref().ok_or(libc::EIO)?;
+        let sd = self.staging.dir().ok_or(libc::EOPNOTSUPP)?;
+        let staging_mutex = self.staging.lock(ino);
+        let _staging_guard = staging_mutex.lock().await;
+        self.ensure_encrypted_staging(ino, false).await?;
+
+        let path = sd.path(ino);
+        let old = sd.file_size(ino);
+        {
+            let _io = self.enc_io_lock.lock().expect("enc_io_lock poisoned");
+            let mut raf = content::open_staging_raf(&path, &encryptor.content_key).map_err(|e| {
+                error!("open staging raf for truncate ino={}: {}", ino, e);
+                libc::EIO
+            })?;
+            raf.truncate(new_size).map_err(|e| {
+                error!("raf truncate ino={}: {}", ino, e);
+                libc::EIO
+            })?;
+            raf.sync().map_err(|e| {
+                error!("raf sync ino={}: {}", ino, e);
+                libc::EIO
+            })?;
+        }
+        sd.resize_bytes(old, sd.file_size(ino));
+        let mut inodes = self.inode_table.write().expect("inodes poisoned");
+        if let Some(entry) = inodes.get_mut(ino) {
+            entry.size = new_size;
+            entry.cipher_size = Some(content::ciphertext_size(new_size));
+            let now = SystemTime::now();
+            entry.mtime = now;
+            entry.ctime = now;
+            entry.set_dirty();
+        }
+        Ok(())
+    }
+
+    /// Probe the direct-child files of a listing (bounded concurrency) and return
+    /// a `xet_hash → plaintext size` map. Nested files are probed when their own
+    /// directory is listed. Files whose header doesn't probe are omitted, so the
+    /// caller drops them.
+    #[cfg(feature = "encrypt")]
+    async fn probe_listing_plaintext_sizes(
+        &self,
+        entries: &[crate::hub_api::TreeEntry],
+        prefix: &str,
+    ) -> HashMap<String, u64> {
+        use futures::stream::StreamExt;
+        const PROBE_CONCURRENCY: usize = 16;
+
+        let mut targets: Vec<(String, u64)> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for e in entries {
+            if e.entry_type != "file" {
+                continue;
+            }
+            let rel = if prefix.is_empty() {
+                e.path.as_str()
+            } else {
+                match e.path.strip_prefix(prefix).and_then(|r| r.strip_prefix('/')) {
+                    Some(r) => r,
+                    None => continue,
+                }
+            };
+            if rel.contains('/') {
+                continue; // nested: probed when its directory is listed
+            }
+            let (Some(hash), Some(size)) = (e.xet_hash.as_deref(), e.size) else {
+                continue;
+            };
+            if size > 0 && seen.insert(hash.to_string()) {
+                targets.push((hash.to_string(), size));
+            }
+        }
+
+        let probed: Vec<(String, Option<u64>)> =
+            futures::stream::iter(targets.into_iter().map(|(hash, size)| async move {
+                let pt = self.probe_remote_plaintext_size(&hash, size).await;
+                (hash, pt)
+            }))
+            .buffer_unordered(PROBE_CONCURRENCY)
+            .collect()
+            .await;
+
+        probed.into_iter().filter_map(|(h, pt)| pt.map(|p| (h, p))).collect()
     }
 
     /// Fetch data for the prefetch buffer. Uses the persistent stream for sequential
@@ -2167,11 +2850,19 @@ impl VirtualFs {
         let read_target = {
             let files = self.open_files.read().expect("open_files poisoned");
             match files.get(&file_handle) {
+                // An encrypted staging file is read through the RAF adapter.
+                #[cfg(feature = "encrypt")]
+                Some(OpenFile::Local {
+                    ino, encrypted: true, ..
+                }) => ReadTarget::LocalEncrypted { ino: *ino },
                 Some(OpenFile::Local { file, .. }) => ReadTarget::LocalFd(file.clone()),
+                // An encrypted lazy handle decrypts via the RAF adapter; a plain
+                // one serves from the prefetch buffer.
+                #[cfg(feature = "encrypt")]
+                Some(OpenFile::Lazy { enc: Some(state), .. }) => ReadTarget::Encrypted(state.clone()),
                 Some(OpenFile::Lazy { prefetch, .. }) => ReadTarget::Remote {
                     prefetch: prefetch.clone(),
                 },
-                // write-only, not readable
                 Some(OpenFile::Streaming { .. }) => return Err(libc::EBADF), // write-only, not readable
                 None => return Err(libc::EBADF), // handle already closed (race with release)
             }
@@ -2273,6 +2964,10 @@ impl VirtualFs {
                 let eof = cursor == file_size;
                 Ok((response.freeze(), eof))
             }
+            #[cfg(feature = "encrypt")]
+            ReadTarget::Encrypted(state) => self.encrypted_read(&state, offset, size).await,
+            #[cfg(feature = "encrypt")]
+            ReadTarget::LocalEncrypted { ino } => self.encrypted_local_read(ino, offset, size),
         }
     }
 
@@ -2293,17 +2988,36 @@ impl VirtualFs {
         // Streaming = append-only channel to CAS (default mode).
         // Clone out of the map so we release the RwLock before doing I/O.
         enum WriteTarget {
-            Local { file: Arc<File>, ino: u64 },
-            Streaming { ino: u64, channel: Arc<StreamingChannel> },
+            Local {
+                file: Arc<File>,
+                ino: u64,
+            },
+            Streaming {
+                ino: u64,
+                channel: Arc<StreamingChannel>,
+            },
+            #[cfg(feature = "encrypt")]
+            LocalEncrypted {
+                ino: u64,
+            },
         }
 
         let target = {
             let files = self.open_files.read().expect("open_files poisoned");
             match files.get(&file_handle) {
+                // An encrypted staging file is written through the RAF adapter.
+                #[cfg(feature = "encrypt")]
+                Some(OpenFile::Local {
+                    ino,
+                    encrypted: true,
+                    writable: true,
+                    ..
+                }) => WriteTarget::LocalEncrypted { ino: *ino },
                 Some(OpenFile::Local {
                     ino,
                     file,
                     writable: true,
+                    ..
                 }) => WriteTarget::Local {
                     file: file.clone(),
                     ino: *ino,
@@ -2348,6 +3062,8 @@ impl VirtualFs {
                     Ok(written)
                 }
             }
+            #[cfg(feature = "encrypt")]
+            WriteTarget::LocalEncrypted { ino: handle_ino } => self.encrypted_local_write(handle_ino, offset, data),
             WriteTarget::Streaming {
                 ino: handle_ino,
                 channel,
@@ -2740,6 +3456,8 @@ impl VirtualFs {
             debug!("create: rejecting OS junk file: {}", name);
             return Err(libc::EACCES);
         }
+        #[cfg(feature = "encrypt")]
+        self.check_encrypted_name(name)?;
 
         debug!("create: parent={}, name={}", parent, name);
 
@@ -2790,6 +3508,12 @@ impl VirtualFs {
 
         if self.advanced_writes {
             // Advanced mode: staging file on disk + async flush (or overlay file in overlay mode).
+            // Encrypted mounts initialize the staging file as a ciphertext
+            // container so plaintext never lands on disk.
+            #[cfg(feature = "encrypt")]
+            if let Some(handle) = self.create_encrypted(ino, &full_path, mode)? {
+                return Ok(handle);
+            }
             match self.open_local_backing_file(ino, &full_path, true, true, true, true) {
                 Ok(file) => {
                     if let Err(e) = self.set_local_backing_mode(&full_path, mode) {
@@ -2806,6 +3530,8 @@ impl VirtualFs {
                             ino,
                             file: Arc::new(file),
                             writable: true,
+                            #[cfg(feature = "encrypt")]
+                            encrypted: false,
                         },
                     );
 
@@ -2862,6 +3588,8 @@ impl VirtualFs {
             debug!("mkdir: rejecting OS junk directory: {}", name);
             return Err(libc::EACCES);
         }
+        #[cfg(feature = "encrypt")]
+        self.check_encrypted_name(name)?;
 
         debug!("mkdir: parent={}, name={}", parent, name);
 
@@ -2959,7 +3687,7 @@ impl VirtualFs {
         // destination's remote children. A rejected source (dirty or hashless,
         // the routine *arr link-then-copy fallback) must not pay for a
         // list_tree it would throw away.
-        let (source_path, xet_hash, size, mode, uid, gid) = {
+        let (source_path, xet_hash, size, cipher_size, mode, uid, gid) = {
             let inodes = self.inode_table.read().expect("inodes poisoned");
             let source = inodes.get(ino).ok_or(libc::ENOENT)?;
             if source.kind != InodeKind::File {
@@ -2975,6 +3703,7 @@ impl VirtualFs {
                 source.full_path.clone(),
                 hash,
                 source.size,
+                source.cipher_size,
                 source.mode,
                 source.uid,
                 source.gid,
@@ -3046,6 +3775,14 @@ impl VirtualFs {
             uid,
             gid,
         );
+        // The alias shares the source's ciphertext object, so it must inherit the
+        // ciphertext length too: `open` uses it as the remote object size, and the
+        // plaintext `size` is shorter (the container adds a header and tags).
+        if let Some(cs) = cipher_size
+            && let Some(entry) = inodes.get_mut(new_ino)
+        {
+            entry.cipher_size = Some(cs);
+        }
         inodes.touch_parent(newparent, now);
         inodes.touch(new_ino);
 
@@ -3292,6 +4029,8 @@ impl VirtualFs {
             debug!("rename: rejecting rename to OS junk name: {}", newname);
             return Err(libc::EACCES);
         }
+        #[cfg(feature = "encrypt")]
+        self.check_encrypted_name(newname)?;
 
         debug!(
             "rename: parent={}, name={}, newparent={}, newname={}",
@@ -3743,7 +4482,26 @@ impl VirtualFs {
                 }
             };
 
-            if !self.advanced_writes {
+            // Encrypted files truncate through the RAF adapter (raw `set_len`
+            // would corrupt the ciphertext container). Checked after the inode
+            // validation above so a directory or missing inode still gets
+            // EISDIR/ENOENT. Other attribute changes below are unaffected.
+            #[cfg(feature = "encrypt")]
+            let encrypted_truncate = self.is_encrypting();
+            #[cfg(not(feature = "encrypt"))]
+            let encrypted_truncate = false;
+
+            if encrypted_truncate {
+                #[cfg(feature = "encrypt")]
+                {
+                    self.encrypted_setattr_truncate(ino, new_size).await?;
+                    // Schedule flush so the truncation reaches CAS/bucket without
+                    // waiting for shutdown (same as the plaintext branch below).
+                    if let Some(fm) = &self.flush_manager {
+                        fm.enqueue(ino);
+                    }
+                }
+            } else if !self.advanced_writes {
                 // Simple mode: ftruncate via setattr is silently ignored.
                 // Real truncation goes through open(O_TRUNC) which is handled separately.
             } else {
@@ -3899,6 +4657,8 @@ impl VirtualFs {
         Ok(FileEntry {
             xet_hash: entry.xet_hash.clone().unwrap_or_default(),
             size: entry.size,
+            #[cfg(feature = "encrypt")]
+            cipher_size: entry.cipher_size,
             is_dirty: entry.is_dirty(),
             full_path: entry.full_path.to_string(),
         })
@@ -3950,6 +4710,9 @@ struct RenameInfo {
 struct FileEntry {
     xet_hash: String,
     size: u64,
+    /// Ciphertext object size for encrypted files (see `InodeEntry::cipher_size`).
+    #[cfg(feature = "encrypt")]
+    cipher_size: Option<u64>,
     is_dirty: bool,
     full_path: String,
 }
@@ -4014,14 +4777,39 @@ struct StreamingChannel {
 /// An open file handle — either a local fd, lazy remote reference, or streaming writer.
 enum OpenFile {
     /// Local file (staging for writes, or dirty reads).
-    Local { ino: u64, file: Arc<File>, writable: bool },
+    Local {
+        ino: u64,
+        file: Arc<File>,
+        writable: bool,
+        /// When set, the staging file is an HFEB+RAF ciphertext container;
+        /// reads/writes/truncates go through the RAF adapter, never raw
+        /// `pread`/`pwrite`. `file` is kept only to hold the handle open.
+        #[cfg(feature = "encrypt")]
+        encrypted: bool,
+    },
     /// Lazy remote — data fetched on-demand with adaptive prefetch buffer.
     Lazy {
         ino: u64,
         prefetch: Arc<tokio::sync::Mutex<PrefetchState>>,
+        /// When set, this is an encrypted file: reads decrypt via the RAF read
+        /// adapter using the ciphertext object size, bypassing the prefetch
+        /// buffer (which the `prefetch` field then only carries for handle
+        /// bookkeeping).
+        #[cfg(feature = "encrypt")]
+        enc: Option<Arc<EncReadState>>,
     },
     /// Streaming append-only writer (default write mode).
     Streaming { ino: u64, channel: Arc<StreamingChannel> },
+}
+
+/// Per-handle state for decrypting reads of a remote encrypted file. The RAF
+/// header is fetched once and cached; chunk slots are fetched per read.
+#[cfg(feature = "encrypt")]
+struct EncReadState {
+    xet_hash: String,
+    /// Size of the remote ciphertext object (what the CAS layer ranges over).
+    cipher_size: u64,
+    header: tokio::sync::Mutex<Option<Vec<u8>>>,
 }
 
 /// Check whether two PIDs belong to the same process.
@@ -4103,6 +4891,12 @@ enum ReadTarget {
     Remote {
         prefetch: Arc<tokio::sync::Mutex<PrefetchState>>,
     },
+    /// Remote encrypted file: decrypt ranged ciphertext via the RAF adapter.
+    #[cfg(feature = "encrypt")]
+    Encrypted(Arc<EncReadState>),
+    /// Local encrypted staging file: decrypt via the RAF adapter.
+    #[cfg(feature = "encrypt")]
+    LocalEncrypted { ino: u64 },
 }
 
 #[cfg(test)]

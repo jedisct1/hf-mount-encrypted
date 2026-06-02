@@ -1346,7 +1346,7 @@ fn poll_dirty_files_skipped() {
         }
 
         let mut inodes = vfs.inode_table.write().unwrap();
-        let updated = inodes.update_remote_file(ino, Some("new_hash".to_string()), None, 999, SystemTime::now());
+        let updated = inodes.update_remote_file(ino, Some("new_hash".to_string()), None, 999, SystemTime::now(), None);
         assert!(!updated);
         assert_eq!(inodes.get(ino).unwrap().xet_hash.as_deref(), Some("hash1"));
     });
@@ -2597,11 +2597,19 @@ fn poll_skips_list_tree_when_revision_unchanged() {
         let inodes = vfs.inode_table.clone();
         let neg = vfs.negative_cache.clone();
         let inv = vfs.invalidator.clone();
+        #[cfg(feature = "encrypt")]
+        let xet_dyn: Arc<dyn crate::xet::XetOps> = vfs.xet_sessions.clone();
         let handle = tokio::spawn(async move {
             tokio::select! {
                 _ = VirtualFs::poll_remote_changes(
                     hub_dyn, inodes, neg, inv,
                     Duration::from_millis(10), 4,
+                    #[cfg(feature = "encrypt")]
+                    xet_dyn,
+                    #[cfg(feature = "encrypt")]
+                    None,
+                    #[cfg(feature = "encrypt")]
+                    Duration::from_secs(30),
                 ) => {}
                 _ = stop_clone.notified() => {}
             }
@@ -5708,4 +5716,678 @@ fn streaming_worker_surfaces_real_hub_error_on_failed_write() {
 
         worker.await.unwrap();
     });
+}
+
+#[cfg(feature = "encrypt")]
+mod encryption {
+    use super::super::VirtualFs;
+    use super::super::inode::ROOT_INODE;
+    use crate::encryption::{Encryptor, MasterKey, content};
+    use crate::test_mocks::{MockHub, MockXet, TestOpts, make_encrypted_test_vfs};
+    use crate::xet::XetOps;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    fn encryptor() -> Arc<Encryptor> {
+        let master = MasterKey::from_bytes(&[0x42u8; 32]).unwrap();
+        Arc::new(Encryptor::from_master_key(&master, content::ALG_AEGIS_128X2))
+    }
+
+    /// Build a remote ciphertext object (HFEB header + AEGIS-RAF container) for
+    /// `plaintext`, encrypted under `content_key`.
+    fn build_object(content_key: &[u8; 16], plaintext: &[u8]) -> Vec<u8> {
+        use aegis::raf::{Aegis128X2, Raf};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("c");
+        {
+            let mut raf = Raf::<Aegis128X2>::create_file(&path, content_key).unwrap();
+            if !plaintext.is_empty() {
+                raf.write(plaintext, 0).unwrap();
+            }
+            raf.sync().unwrap();
+        }
+        let raf_container = std::fs::read(&path).unwrap();
+        let mut header = [0u8; content::HFEB_HEADER_LEN];
+        content::write_header(&mut header, content::ALG_AEGIS_128X2);
+        let mut object = header.to_vec();
+        object.extend_from_slice(&raf_container);
+        object
+    }
+
+    fn opts() -> TestOpts {
+        TestOpts {
+            // Avoid HEAD revalidation after the listing-time probe.
+            serve_lookup_from_cache: true,
+            metadata_ttl: std::time::Duration::from_secs(3600),
+            ..Default::default()
+        }
+    }
+
+    fn setup(plaintext: &[u8]) -> (tokio::runtime::Runtime, Arc<VirtualFs>, Arc<MockXet>, u64) {
+        let enc = encryptor();
+        let object = build_object(&enc.content_key, plaintext);
+        let object_size = object.len() as u64;
+        let hub = MockHub::new();
+        let xet = MockXet::new();
+        xet.add_file("h1", &object);
+        // The remote advertises the ciphertext object size — invariant (1).
+        hub.add_file("secret.bin", object_size, Some("h1"), None);
+        let rt = super::new_runtime();
+        let vfs = make_encrypted_test_vfs(hub, xet.clone(), enc, opts(), &rt);
+        (rt, vfs, xet, object_size)
+    }
+
+    /// Like `setup`, but with advanced writes enabled and the `Encryptor`
+    /// returned so the caller can decrypt the re-uploaded object.
+    fn setup_aw(
+        plaintext: &[u8],
+    ) -> (
+        tokio::runtime::Runtime,
+        Arc<VirtualFs>,
+        Arc<MockXet>,
+        Arc<Encryptor>,
+        u64,
+    ) {
+        let enc = encryptor();
+        let object = build_object(&enc.content_key, plaintext);
+        let object_size = object.len() as u64;
+        let hub = MockHub::new();
+        let xet = MockXet::new();
+        xet.add_file("h1", &object);
+        hub.add_file("secret.bin", object_size, Some("h1"), None);
+        let rt = super::new_runtime();
+        let vfs = make_encrypted_test_vfs(
+            hub,
+            xet.clone(),
+            enc.clone(),
+            TestOpts {
+                advanced_writes: true,
+                serve_lookup_from_cache: true,
+                metadata_ttl: std::time::Duration::from_secs(3600),
+                ..Default::default()
+            },
+            &rt,
+        );
+        (rt, vfs, xet, enc, object_size)
+    }
+
+    /// Download the committed object for `ino` and decrypt it back to plaintext.
+    async fn decrypt_committed(vfs: &VirtualFs, xet: &MockXet, enc: &Encryptor, ino: u64) -> Vec<u8> {
+        let (xet_hash, cipher_size, size) = {
+            let inodes = vfs.inode_table.read().unwrap();
+            let e = inodes.get(ino).unwrap();
+            (e.xet_hash.clone().unwrap(), e.cipher_size.unwrap(), e.size)
+        };
+        let fi = xet_data::processing::XetFileInfo::new(xet_hash, cipher_size);
+        let mut stream = xet.download_stream_boxed(&fi, 0, Some(cipher_size)).unwrap();
+        let mut blob = Vec::new();
+        while let Some(c) = stream.next().await.unwrap() {
+            blob.extend_from_slice(&c);
+        }
+        assert_eq!(
+            blob.len() as u64,
+            cipher_size,
+            "downloaded object is the full ciphertext"
+        );
+        assert_eq!(&blob[..4], b"HFEB", "uploaded object is an HFEB container");
+        let header = blob[content::HFEB_HEADER_LEN..content::CONTAINER_HEADER_LEN as usize].to_vec();
+        let slots = blob[content::CONTAINER_HEADER_LEN as usize..].to_vec();
+        let io = content::ReadIo::new(
+            blob.len() as u64 - content::HFEB_HEADER_LEN as u64,
+            header,
+            content::CONTAINER_HEADER_LEN - content::HFEB_HEADER_LEN as u64,
+            slots,
+        );
+        let mut out = vec![0u8; size as usize];
+        let n = content::decrypt_read(&enc.content_key, io, 0, &mut out).unwrap();
+        out.truncate(n);
+        out
+    }
+
+    #[test]
+    fn getattr_shows_plaintext_size_and_reads_decrypt() {
+        let plaintext: Vec<u8> = (0..1000).map(|i| (i % 251) as u8).collect();
+        let (rt, vfs, _xet, object_size) = setup(&plaintext);
+        rt.block_on(async {
+            // (2)+(3): the VFS probes the header before exposing the inode, so
+            // getattr/lookup report the plaintext size, never the ciphertext one.
+            let attr = vfs.lookup(ROOT_INODE, "secret.bin").await.unwrap();
+            assert_eq!(attr.size, 1000);
+            assert!(object_size > 1000);
+            {
+                let inodes = vfs.inode_table.read().unwrap();
+                let e = inodes.get(attr.ino).unwrap();
+                assert_eq!(e.size, 1000); // plaintext, for stat
+                assert_eq!(e.cipher_size, Some(object_size)); // ciphertext, for CAS
+            }
+            // (5): reads return plaintext. A successful decrypt also proves (4):
+            // range planning used the ciphertext size (else the fetch is short).
+            let fh = vfs.open(attr.ino, false, false, Some(1)).await.unwrap();
+            let (data, _eof) = vfs.read(fh, 0, 1000).await.unwrap();
+            assert_eq!(&data[..], &plaintext[..]);
+            let (mid, _) = vfs.read(fh, 100, 50).await.unwrap();
+            assert_eq!(&mid[..], &plaintext[100..150]);
+        });
+    }
+
+    #[test]
+    fn deep_read_fetches_only_header_and_covering_slot() {
+        let plaintext: Vec<u8> = (0..200_000).map(|i| (i % 251) as u8).collect();
+        let (rt, vfs, xet, object_size) = setup(&plaintext);
+        rt.block_on(async {
+            let attr = vfs.lookup(ROOT_INODE, "secret.bin").await.unwrap();
+            assert_eq!(attr.size, 200_000);
+            let fh = vfs.open(attr.ino, false, false, Some(1)).await.unwrap();
+            xet.stream_calls.lock().unwrap().clear(); // ignore the listing-time probe
+            let (data, _) = vfs.read(fh, 150_000, 100).await.unwrap();
+            assert_eq!(&data[..], &plaintext[150_000..150_100]);
+            // (6): only the header plus the one covering chunk slot were fetched,
+            // never the whole object.
+            let total: u64 = xet
+                .stream_calls
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(off, end)| end.unwrap() - off)
+                .sum();
+            assert!(total < object_size, "fetched {total} of {object_size} (should be lazy)");
+            assert!(total <= 64 + 65568, "fetched more than header + one slot: {total}");
+        });
+    }
+
+    /// A file whose bytes are not a valid HFEB/RAF container must be dropped, not
+    /// inserted with its ciphertext size masquerading as the plaintext size.
+    #[test]
+    fn invalid_header_file_is_dropped() {
+        let enc = encryptor();
+        let good = build_object(&enc.content_key, b"hello world");
+        let mut bad = vec![0u8; 70]; // valid HFEB prefix, garbage RAF header
+        let mut header = [0u8; content::HFEB_HEADER_LEN];
+        content::write_header(&mut header, content::ALG_AEGIS_128X2);
+        bad[..content::HFEB_HEADER_LEN].copy_from_slice(&header);
+
+        let hub = MockHub::new();
+        let xet = MockXet::new();
+        xet.add_file("good", &good);
+        xet.add_file("bad", &bad);
+        hub.add_file("good.bin", good.len() as u64, Some("good"), None);
+        hub.add_file("bad.bin", bad.len() as u64, Some("bad"), None);
+        let rt = super::new_runtime();
+        let vfs = make_encrypted_test_vfs(hub, xet, enc, opts(), &rt);
+        rt.block_on(async {
+            let names: Vec<String> = vfs
+                .readdir(ROOT_INODE)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|e| e.name)
+                .collect();
+            assert!(names.iter().any(|n| n == "good.bin"));
+            assert!(
+                !names.iter().any(|n| n == "bad.bin"),
+                "a file with an invalid header must be dropped, got {names:?}"
+            );
+        });
+    }
+
+    /// A valid RAF container under a corrupt HFEB prefix must be dropped — the
+    /// probe validates the HFEB magic/algorithm, not just the RAF header.
+    #[test]
+    fn bad_hfeb_prefix_with_valid_raf_is_dropped() {
+        let enc = encryptor();
+        let mut obj = build_object(&enc.content_key, b"hello"); // valid HFEB + valid RAF
+        obj[0] = b'X'; // corrupt the HFEB magic; the RAF container stays valid
+        let good = build_object(&enc.content_key, b"ok");
+        let hub = MockHub::new();
+        let xet = MockXet::new();
+        xet.add_file("bad", &obj);
+        xet.add_file("good", &good);
+        hub.add_file("bad.bin", obj.len() as u64, Some("bad"), None);
+        hub.add_file("good.bin", good.len() as u64, Some("good"), None);
+        let rt = super::new_runtime();
+        let vfs = make_encrypted_test_vfs(hub, xet, enc, opts(), &rt);
+        rt.block_on(async {
+            let names: Vec<String> = vfs
+                .readdir(ROOT_INODE)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|e| e.name)
+                .collect();
+            assert!(names.iter().any(|n| n == "good.bin"));
+            assert!(
+                !names.iter().any(|n| n == "bad.bin"),
+                "a valid RAF under a bad HFEB prefix must be dropped, got {names:?}"
+            );
+        });
+    }
+
+    /// link() aliases the same ciphertext object, so the alias inode must
+    /// inherit `cipher_size`: `open` uses it as the remote object length, and
+    /// the plaintext `size` is shorter (container header plus tags), so losing
+    /// it would make ranged reads of the alias fetch a truncated object.
+    #[test]
+    fn link_alias_inherits_cipher_size_and_decrypts() {
+        let plaintext: Vec<u8> = (0..1000).map(|i| (i % 251) as u8).collect();
+        let (rt, vfs, _xet, object_size) = setup(&plaintext);
+        rt.block_on(async {
+            let src = vfs.lookup(ROOT_INODE, "secret.bin").await.unwrap();
+            let alias = vfs.link(src.ino, ROOT_INODE, "alias.bin").await.unwrap();
+            assert_eq!(alias.size, 1000, "alias reports the plaintext size");
+            {
+                let inodes = vfs.inode_table.read().unwrap();
+                let e = inodes.get(alias.ino).unwrap();
+                assert_eq!(e.cipher_size, Some(object_size));
+            }
+            let fh = vfs.open(alias.ino, false, false, Some(1)).await.unwrap();
+            let (data, _eof) = vfs.read(fh, 0, 1000).await.unwrap();
+            assert_eq!(&data[..], &plaintext[..]);
+            let (tail, _eof) = vfs.read(fh, 900, 100).await.unwrap();
+            assert_eq!(&tail[..], &plaintext[900..]);
+            vfs.release(fh).await.unwrap();
+        });
+    }
+
+    /// Same guarantee as `read_stalled_stream_times_out_with_eio`, but for the
+    /// encrypted range-fetch path: a stalled CAS/CDN stream must fail the read
+    /// with EIO once the read-fetch timeout elapses instead of parking the
+    /// worker thread forever.
+    #[test]
+    fn encrypted_read_stalled_stream_times_out_with_eio() {
+        let enc = encryptor();
+        let plaintext: Vec<u8> = (0..1000).map(|i| (i % 251) as u8).collect();
+        let object = build_object(&enc.content_key, &plaintext);
+        let hub = MockHub::new();
+        let xet = MockXet::new();
+        xet.add_file("h1", &object);
+        hub.add_file("secret.bin", object.len() as u64, Some("h1"), None);
+        let rt = super::new_runtime();
+        let vfs = make_encrypted_test_vfs(
+            hub,
+            xet.clone(),
+            enc,
+            TestOpts {
+                serve_lookup_from_cache: true,
+                metadata_ttl: Duration::from_secs(3600),
+                read_fetch_timeout: Duration::from_millis(150),
+                ..Default::default()
+            },
+            &rt,
+        );
+        rt.block_on(async {
+            // Lookup probes the header while the stream still works; only the
+            // read below hits the stalled connection.
+            let attr = vfs.lookup(ROOT_INODE, "secret.bin").await.unwrap();
+            let fh = vfs.open(attr.ino, false, false, Some(1)).await.unwrap();
+            xet.stall_stream_reads();
+
+            let result = tokio::time::timeout(Duration::from_secs(10), vfs.read(fh, 0, 100)).await;
+            let read_result = result.expect("read() did not return — encrypted fetch was not bounded by the timeout");
+            assert_eq!(read_result.unwrap_err(), libc::EIO);
+
+            vfs.release(fh).await.unwrap();
+        });
+    }
+
+    /// Poll must never write a ciphertext size into the plaintext `size`, must
+    /// refresh `cipher_size`/hash so reads target the new object, and its
+    /// post-pass must probe the new header to repair the plaintext size (so the
+    /// fix works on NFS too, where there's no per-lookup revalidate).
+    #[test]
+    fn poll_repairs_plaintext_size_after_change() {
+        use std::collections::HashSet;
+        let plaintext: Vec<u8> = (0..1000).map(|i| (i % 251) as u8).collect();
+        let (rt, vfs, xet, object_size) = setup(&plaintext);
+        rt.block_on(async {
+            let ino = vfs.lookup(ROOT_INODE, "secret.bin").await.unwrap().ino;
+            let enc = vfs.encryption.clone().unwrap();
+            let polled: HashSet<String> = std::iter::once(String::new()).collect();
+            let entry = |size: u64, hash: &str| crate::hub_api::TreeEntry {
+                path: "secret.bin".to_string(),
+                entry_type: "file".to_string(),
+                size: Some(size),
+                xet_hash: Some(hash.to_string()),
+                oid: None,
+                mtime: None,
+            };
+
+            // Unchanged remote (same hash, ciphertext object size): no corruption,
+            // and nothing flagged for a re-probe.
+            VirtualFs::apply_poll_diff(
+                vec![entry(object_size, "h1")],
+                &polled,
+                &vfs.inode_table,
+                &vfs.negative_cache,
+                &vfs.invalidator,
+            );
+            {
+                let inodes = vfs.inode_table.read().unwrap();
+                let e = inodes.get(ino).unwrap();
+                assert_eq!(e.size, 1000);
+                assert_eq!(e.cipher_size, Some(object_size));
+                assert!(!e.needs_size_probe);
+            }
+
+            // Remote content changed (new hash, new plaintext spanning two chunks).
+            let new_plaintext: Vec<u8> = (0..70_000).map(|i| (i % 251) as u8).collect();
+            let new_object = build_object(&enc.content_key, &new_plaintext);
+            let new_object_size = new_object.len() as u64;
+            xet.add_file("h2", &new_object);
+
+            // Apply keeps the old plaintext size, refreshes cipher_size + hash, and
+            // flags a re-probe.
+            VirtualFs::apply_poll_diff(
+                vec![entry(new_object_size, "h2")],
+                &polled,
+                &vfs.inode_table,
+                &vfs.negative_cache,
+                &vfs.invalidator,
+            );
+            {
+                let inodes = vfs.inode_table.read().unwrap();
+                let e = inodes.get(ino).unwrap();
+                assert_eq!(e.size, 1000, "plaintext size must never become the ciphertext size");
+                assert_eq!(e.cipher_size, Some(new_object_size));
+                assert_eq!(e.xet_hash.as_deref(), Some("h2"));
+                assert!(e.needs_size_probe);
+            }
+
+            // The post-pass probes the new header and repairs the plaintext size.
+            VirtualFs::repair_encrypted_sizes(&vfs.xet_sessions, &enc, &vfs.inode_table, 4, Duration::from_secs(30))
+                .await;
+            {
+                let inodes = vfs.inode_table.read().unwrap();
+                let e = inodes.get(ino).unwrap();
+                assert_eq!(e.size, 70_000, "post-pass must repair the plaintext size");
+                assert_eq!(e.cipher_size, Some(new_object_size));
+                assert!(!e.needs_size_probe);
+            }
+        });
+    }
+
+    /// The end-to-end gate: create an encrypted file, write plaintext, flush, and
+    /// confirm the uploaded object is HFEB ciphertext that decrypts to the
+    /// original, with `size = plaintext_len` and `cipher_size = uploaded_len`.
+    #[test]
+    fn encrypted_write_flush_cycle() {
+        let enc = encryptor();
+        let hub = MockHub::new();
+        let xet = MockXet::new();
+        let rt = super::new_runtime();
+        let vfs = make_encrypted_test_vfs(
+            hub,
+            xet.clone(),
+            enc.clone(),
+            TestOpts {
+                advanced_writes: true,
+                serve_lookup_from_cache: true,
+                metadata_ttl: std::time::Duration::from_secs(3600),
+                ..Default::default()
+            },
+            &rt,
+        );
+        let plaintext: Vec<u8> = (0..70_000).map(|i| (i % 251) as u8).collect();
+        rt.block_on(async {
+            let (attr, fh) = vfs
+                .create(ROOT_INODE, "secret.bin", 0o644, 1000, 1000, Some(7))
+                .await
+                .unwrap();
+            let ino = attr.ino;
+
+            let mut off = 0usize;
+            while off < plaintext.len() {
+                let end = (off + 9000).min(plaintext.len());
+                let n = super::write_blocking(&vfs, ino, fh, off as u64, &plaintext[off..end])
+                    .await
+                    .unwrap();
+                assert!(n > 0);
+                off += n as usize;
+            }
+
+            // Read back from the dirty staging container (decrypts), and stat
+            // reports the plaintext size while still local.
+            let (dirty, _) = vfs.read(fh, 100, 50).await.unwrap();
+            assert_eq!(&dirty[..], &plaintext[100..150]);
+            assert_eq!(vfs.getattr(ino).unwrap().size, 70_000);
+
+            vfs.release(fh).await.unwrap();
+            vfs.shutdown(); // force the async flush to upload + commit
+
+            let (xet_hash, cipher_size, size) = {
+                let inodes = vfs.inode_table.read().unwrap();
+                let e = inodes.get(ino).unwrap();
+                (e.xet_hash.clone().unwrap(), e.cipher_size.unwrap(), e.size)
+            };
+            assert_eq!(size, 70_000, "plaintext size preserved across flush");
+            assert_eq!(
+                cipher_size,
+                content::ciphertext_size(70_000),
+                "cipher_size is the uploaded ciphertext length"
+            );
+
+            // The uploaded object is an HFEB ciphertext container, never plaintext.
+            let fi = xet_data::processing::XetFileInfo::new(xet_hash, cipher_size);
+            let mut stream = xet.download_stream_boxed(&fi, 0, Some(cipher_size)).unwrap();
+            let mut blob = Vec::new();
+            while let Some(c) = stream.next().await.unwrap() {
+                blob.extend_from_slice(&c);
+            }
+            assert_eq!(blob.len() as u64, cipher_size);
+            assert_eq!(&blob[..4], b"HFEB");
+            assert!(
+                !blob.windows(16).any(|w| w == &plaintext[..16]),
+                "uploaded object must be ciphertext"
+            );
+
+            // And it decrypts back to the original plaintext.
+            let header = blob[content::HFEB_HEADER_LEN..content::CONTAINER_HEADER_LEN as usize].to_vec();
+            let slots = blob[content::CONTAINER_HEADER_LEN as usize..].to_vec();
+            let io = content::ReadIo::new(
+                blob.len() as u64 - content::HFEB_HEADER_LEN as u64,
+                header,
+                content::CONTAINER_HEADER_LEN - content::HFEB_HEADER_LEN as u64,
+                slots,
+            );
+            let mut out = vec![0u8; plaintext.len()];
+            let n = content::decrypt_read(&enc.content_key, io, 0, &mut out).unwrap();
+            out.truncate(n);
+            assert_eq!(out, plaintext);
+        });
+    }
+
+    /// Opening an existing remote encrypted file for write downloads the
+    /// ciphertext object (using cipher_size), installs an encrypted handle, and
+    /// lets the caller overwrite part of it in place. The re-uploaded object is
+    /// ciphertext, decrypts to the edited plaintext, and the inode keeps the
+    /// plaintext size while cipher_size tracks the new ciphertext length.
+    #[test]
+    fn rewrite_existing_encrypted_file() {
+        let mut plaintext: Vec<u8> = (0..1000).map(|i| (i % 251) as u8).collect();
+        let (rt, vfs, xet, enc, _object_size) = setup_aw(&plaintext);
+        rt.block_on(async {
+            let attr = vfs.lookup(ROOT_INODE, "secret.bin").await.unwrap();
+            let ino = attr.ino;
+            assert_eq!(attr.size, 1000);
+
+            // Overwrite bytes [100, 150) in place — a non-truncating rewrite.
+            let patch: Vec<u8> = (0..50).map(|i| 0xA0 ^ i as u8).collect();
+            let fh = vfs.open(ino, true, false, Some(7)).await.unwrap();
+            super::write_blocking(&vfs, ino, fh, 100, &patch).await.unwrap();
+            plaintext[100..150].copy_from_slice(&patch);
+
+            // The dirty staging container reads back the edited plaintext, and
+            // the unmodified tail is intact — the size is unchanged.
+            let (edited, _) = vfs.read(fh, 100, 50).await.unwrap();
+            assert_eq!(&edited[..], &patch[..]);
+            let (head, _) = vfs.read(fh, 0, 100).await.unwrap();
+            assert_eq!(&head[..], &plaintext[0..100]);
+            let (tail, _) = vfs.read(fh, 900, 100).await.unwrap();
+            assert_eq!(&tail[..], &plaintext[900..1000]);
+            assert_eq!(vfs.getattr(ino).unwrap().size, 1000);
+
+            vfs.release(fh).await.unwrap();
+            vfs.shutdown(); // flush + commit
+
+            let (cipher_size, size) = {
+                let inodes = vfs.inode_table.read().unwrap();
+                let e = inodes.get(ino).unwrap();
+                (e.cipher_size.unwrap(), e.size)
+            };
+            assert_eq!(size, 1000, "plaintext size preserved across rewrite");
+            assert_eq!(
+                cipher_size,
+                content::ciphertext_size(1000),
+                "cipher_size is the re-uploaded ciphertext length"
+            );
+
+            let out = decrypt_committed(&vfs, &xet, &enc, ino).await;
+            assert_eq!(out, plaintext, "re-uploaded object decrypts to the edited plaintext");
+        });
+    }
+
+    /// `setattr(size)` on an existing encrypted file truncates through the RAF
+    /// adapter, never a raw `set_len` on the ciphertext container. The shortened
+    /// object decrypts to the truncated plaintext.
+    #[test]
+    fn truncate_encrypted_file() {
+        let plaintext: Vec<u8> = (0..200_000).map(|i| (i % 251) as u8).collect();
+        let (rt, vfs, xet, enc, _object_size) = setup_aw(&plaintext);
+        rt.block_on(async {
+            let attr = vfs.lookup(ROOT_INODE, "secret.bin").await.unwrap();
+            let ino = attr.ino;
+            assert_eq!(attr.size, 200_000);
+
+            // Truncate to a size that crosses a chunk boundary.
+            vfs.setattr(ino, Some(70_000), None, None, None, None, None)
+                .await
+                .unwrap();
+            assert_eq!(vfs.getattr(ino).unwrap().size, 70_000);
+            {
+                let inodes = vfs.inode_table.read().unwrap();
+                let e = inodes.get(ino).unwrap();
+                assert_eq!(e.size, 70_000);
+                assert_eq!(e.cipher_size, Some(content::ciphertext_size(70_000)));
+            }
+
+            // The dirty staging container reads back the truncated plaintext.
+            let rfh = vfs.open(ino, false, false, Some(7)).await.unwrap();
+            let (data, _) = vfs.read(rfh, 0, 70_000).await.unwrap();
+            assert_eq!(&data[..], &plaintext[..70_000]);
+            let (eof, hit_eof) = vfs.read(rfh, 70_000, 100).await.unwrap();
+            assert!(eof.is_empty() && hit_eof, "no bytes past the truncation point");
+            vfs.release(rfh).await.unwrap();
+
+            vfs.shutdown(); // flush + commit
+
+            let (cipher_size, size) = {
+                let inodes = vfs.inode_table.read().unwrap();
+                let e = inodes.get(ino).unwrap();
+                (e.cipher_size.unwrap(), e.size)
+            };
+            assert_eq!(size, 70_000);
+            assert_eq!(cipher_size, content::ciphertext_size(70_000));
+
+            let out = decrypt_committed(&vfs, &xet, &enc, ino).await;
+            assert_eq!(out.len(), 70_000);
+            assert_eq!(out, &plaintext[..70_000], "truncated object decrypts correctly");
+        });
+    }
+
+    /// `setattr(size)` enqueues a background flush, so the truncation reaches the
+    /// remote on its own (debounce) without an explicit `shutdown()`.
+    #[test]
+    fn truncate_encrypted_file_flushes_in_background() {
+        let plaintext: Vec<u8> = (0..100_000).map(|i| (i % 251) as u8).collect();
+        let (rt, vfs, xet, enc, _object_size) = setup_aw(&plaintext);
+        rt.block_on(async {
+            let attr = vfs.lookup(ROOT_INODE, "secret.bin").await.unwrap();
+            let ino = attr.ino;
+
+            vfs.setattr(ino, Some(40_000), None, None, None, None, None)
+                .await
+                .unwrap();
+
+            // No shutdown — wait for the debounced background flush (100ms) to
+            // commit the truncation on its own.
+            let mut clean = false;
+            for _ in 0..60 {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                if vfs.inode_table.read().unwrap().get(ino).is_some_and(|e| !e.is_dirty()) {
+                    clean = true;
+                    break;
+                }
+            }
+            assert!(clean, "background flush should clear the dirty flag without shutdown");
+
+            let (cipher_size, size) = {
+                let inodes = vfs.inode_table.read().unwrap();
+                let e = inodes.get(ino).unwrap();
+                (e.cipher_size.unwrap(), e.size)
+            };
+            assert_eq!(size, 40_000);
+            assert_eq!(cipher_size, content::ciphertext_size(40_000));
+
+            let out = decrypt_committed(&vfs, &xet, &enc, ino).await;
+            assert_eq!(
+                out,
+                &plaintext[..40_000],
+                "background-flushed object decrypts correctly"
+            );
+        });
+    }
+
+    /// 7d: names that can't be encrypted within NAME_MAX (or contain NUL) are
+    /// rejected up front in create/mkdir/rename, before any local mutation.
+    #[test]
+    fn over_long_or_invalid_names_rejected_early() {
+        let enc = encryptor();
+        let hub = MockHub::new();
+        let xet = MockXet::new();
+        let rt = super::new_runtime();
+        let vfs = make_encrypted_test_vfs(
+            hub,
+            xet,
+            enc,
+            TestOpts {
+                advanced_writes: true,
+                serve_lookup_from_cache: true,
+                metadata_ttl: std::time::Duration::from_secs(3600),
+                ..Default::default()
+            },
+            &rt,
+        );
+        rt.block_on(async {
+            // 195 bytes exceeds the encrypted budget (max 194); 194 fits.
+            let too_long = "a".repeat(195);
+            assert_eq!(
+                vfs.create(ROOT_INODE, &too_long, 0o644, 1000, 1000, Some(7))
+                    .await
+                    .unwrap_err(),
+                libc::ENAMETOOLONG
+            );
+            assert_eq!(
+                vfs.mkdir(ROOT_INODE, &too_long, 0o755, 1000, 1000).await.unwrap_err(),
+                libc::ENAMETOOLONG
+            );
+            // A name containing NUL is rejected too.
+            assert_eq!(
+                vfs.create(ROOT_INODE, "a\0b", 0o644, 1000, 1000, Some(7))
+                    .await
+                    .unwrap_err(),
+                libc::EINVAL
+            );
+            // The longest accepted name (194 bytes) creates fine.
+            let ok = "a".repeat(194);
+            let (_a, fh) = vfs.create(ROOT_INODE, &ok, 0o644, 1000, 1000, Some(7)).await.unwrap();
+            vfs.release(fh).await.unwrap();
+
+            // rename to an over-long target is rejected before mutating state.
+            assert_eq!(
+                vfs.rename(ROOT_INODE, &ok, ROOT_INODE, &too_long, false)
+                    .await
+                    .unwrap_err(),
+                libc::ENAMETOOLONG
+            );
+        });
+    }
 }

@@ -653,6 +653,53 @@ pub fn make_test_vfs(
             read_fetch_timeout: opts.read_fetch_timeout,
             inode_soft_limit: opts.inode_soft_limit,
             lru_sweep_interval: Duration::from_millis(50),
+            #[cfg(feature = "encrypt")]
+            encryption: None,
+        },
+    )
+}
+
+/// Build an encrypting VirtualFs for testing (names + contents encrypted).
+#[cfg(feature = "encrypt")]
+pub fn make_encrypted_test_vfs(
+    hub: Arc<MockHub>,
+    xet: Arc<MockXet>,
+    encryptor: Arc<crate::encryption::Encryptor>,
+    opts: TestOpts,
+    runtime: &tokio::runtime::Runtime,
+) -> Arc<crate::virtual_fs::VirtualFs> {
+    let staging_dir = if opts.advanced_writes || hub.is_repo() {
+        let path = fresh_test_dir("hf_mount_enc_test");
+        Some(StagingDir::new(&path, opts.max_staging_size))
+    } else {
+        None
+    };
+
+    crate::virtual_fs::VirtualFs::new(
+        runtime.handle().clone(),
+        hub,
+        xet,
+        staging_dir,
+        None,
+        None,
+        crate::virtual_fs::VfsConfig {
+            read_only: opts.read_only,
+            advanced_writes: opts.advanced_writes,
+            uid: 1000,
+            gid: 1000,
+            poll_interval_secs: 0,
+            poll_listing_concurrency: 4,
+            metadata_ttl: opts.metadata_ttl,
+            serve_lookup_from_cache: opts.serve_lookup_from_cache,
+            filter_os_files: true,
+            direct_io: false,
+            flush_debounce: Duration::from_millis(100),
+            flush_max_batch_window: Duration::from_secs(1),
+            flush_shutdown_timeout: Duration::from_secs(5),
+            read_fetch_timeout: opts.read_fetch_timeout,
+            inode_soft_limit: opts.inode_soft_limit,
+            lru_sweep_interval: Duration::from_millis(50),
+            encryption: Some(encryptor),
         },
     )
 }
@@ -698,6 +745,8 @@ pub fn make_overlay_test_vfs_with_root(
             read_fetch_timeout: Duration::from_secs(30),
             inode_soft_limit: 0,
             lru_sweep_interval: Duration::from_secs(5),
+            #[cfg(feature = "encrypt")]
+            encryption: None,
         },
     );
     OverlayTestVfs {
