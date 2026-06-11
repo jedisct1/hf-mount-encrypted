@@ -5,14 +5,21 @@
 //! filesystem-safe component. The plaintext path of the parent directory is
 //! the HCTR2 tweak, so every component stays bound to the directory above it.
 //!
-//! Authentication comes from padding: before encryption a name is extended
+//! Authentication comes from padding: before encryption a name is prefixed
 //! with at least [`MIN_ZERO_PAD`] zero bytes (rounded up to a 32-byte block
 //! when that still fits, to hide short-name lengths). Because HCTR2 is a
 //! strong tweakable pseudorandom permutation over the whole block, a forged,
 //! tampered, or relocated ciphertext decrypts to uniformly random bytes, so
-//! the constant-time check that the last 12 bytes are zero passes with
-//! probability 2^-96. Decryption strips trailing NULs, which recovers both
+//! the constant-time check that the first 12 bytes are zero passes with
+//! probability 2^-96. Decryption strips leading NULs, which recovers both
 //! the padded and exact-length cases without recording which one was used.
+//!
+//! The zero bytes go at the front rather than the tail because HCTR2 feeds the
+//! first plaintext block straight through the AES block cipher (the
+//! `E_K(MM)` step), while the rest of the message is masked by the CTR-mode
+//! keystream. Anchoring the redundancy in that first block binds it through the
+//! block cipher itself, which gives the construction stronger key-commitment
+//! security than tail padding does.
 
 use hctr2_rs::Hctr2_128;
 use zeroize::ZeroizeOnDrop;
@@ -106,7 +113,7 @@ impl PathCipher {
         validate_name(name)?;
         let input_len = encrypt_input_len(name.len()).ok_or(PathError::NameTooLong)?;
         let mut buf = vec![0u8; input_len];
-        buf[..name.len()].copy_from_slice(name.as_bytes());
+        buf[input_len - name.len()..].copy_from_slice(name.as_bytes());
         let mut ciphertext = vec![0u8; input_len];
         self.hctr2()
             .encrypt(&buf, parent.as_bytes(), &mut ciphertext)
@@ -123,14 +130,14 @@ impl PathCipher {
         self.hctr2()
             .decrypt(&ciphertext, parent.as_bytes(), &mut plaintext)
             .ok()?;
-        // The zero padding is the MAC: accumulate the last MIN_ZERO_PAD bytes
+        // The zero padding is the MAC: accumulate the first MIN_ZERO_PAD bytes
         // branch-free and compare once, so the check runs in constant time.
-        let pad = &plaintext[plaintext.len() - MIN_ZERO_PAD..];
+        let pad = &plaintext[..MIN_ZERO_PAD];
         let acc = pad.iter().fold(0u8, |acc, &b| acc | b);
         if acc != 0 {
             return None;
         }
-        let stripped = strip_trailing_nuls(&plaintext);
+        let stripped = strip_leading_nuls(&plaintext);
         let name = std::str::from_utf8(stripped).ok()?;
         validate_name(name).ok()?;
         Some(name.to_owned())
@@ -164,12 +171,12 @@ fn encoded_fits(input_len: usize) -> bool {
     base91::encoded_len_upper_bound(input_len) <= NAME_MAX
 }
 
-fn strip_trailing_nuls(bytes: &[u8]) -> &[u8] {
-    let mut end = bytes.len();
-    while end > 0 && bytes[end - 1] == 0 {
-        end -= 1;
+fn strip_leading_nuls(bytes: &[u8]) -> &[u8] {
+    let mut start = 0;
+    while start < bytes.len() && bytes[start] == 0 {
+        start += 1;
     }
-    &bytes[..end]
+    &bytes[start..]
 }
 
 fn push_component(parent: &mut String, comp: &str) {
@@ -315,7 +322,7 @@ mod tests {
     /// that could never have been produced legitimately can be exercised.
     fn encrypt_raw(c: &PathCipher, name: &[u8]) -> String {
         let mut buf = vec![0u8; PAD_BLOCK];
-        buf[..name.len()].copy_from_slice(name);
+        buf[PAD_BLOCK - name.len()..].copy_from_slice(name);
         let mut ciphertext = vec![0u8; PAD_BLOCK];
         c.hctr2().encrypt(&buf, b"", &mut ciphertext).unwrap();
         base91::encode(&ciphertext)
